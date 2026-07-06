@@ -232,6 +232,11 @@ func (h *History) Write(items ...Identifiable) error {
 		if err := ValidateUUID(item.UUID()); err != nil {
 			return fmt.Errorf("refusing to write item: %w", err)
 		}
+		// The commit body is a map keyed by UUID, so a second op on the
+		// same item would silently replace the first. Reject instead.
+		if _, dup := m[item.UUID()]; dup {
+			return fmt.Errorf("refusing to write items: duplicate UUID %s in one commit — split into separate Write calls", item.UUID())
+		}
 		m[item.UUID()] = item
 	}
 	bs, err := json.Marshal(m)

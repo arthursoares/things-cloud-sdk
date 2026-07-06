@@ -60,3 +60,34 @@ func TestHistory_Write_AcceptsCanonicalUUID(t *testing.T) {
 		t.Errorf("Write with canonical UUID: %v, want nil", err)
 	}
 }
+
+func TestHistory_Write_RejectsDuplicateUUIDs(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"server-head-index":1}`)
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "martin@example.com", "")
+	h := &History{Client: c, ID: "33333abb-bfe4-4b03-a5c9-106d42220c72"}
+
+	id := NewUUID()
+	a := TaskActionItem{
+		Item: Item{UUID: id, Kind: ItemKindTask, Action: ItemActionModified},
+		P:    TaskActionItemPayload{Title: String("renamed")},
+	}
+	b := TaskActionItem{
+		Item: Item{UUID: id, Kind: ItemKindTask, Action: ItemActionModified},
+		P:    TaskActionItemPayload{Status: Status(TaskStatusCompleted)},
+	}
+	if err := h.Write(a, b); err == nil {
+		t.Error("Write with two items sharing a UUID: got nil error, want duplicate error — the commit map silently drops one op")
+	}
+	if requests != 0 {
+		t.Errorf("server received %d requests, want 0", requests)
+	}
+}
