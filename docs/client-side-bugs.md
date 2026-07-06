@@ -331,6 +331,33 @@ if v, ok := opts["area"]; ok && v != "" {
 
 Tasks moved from Inbox to project/area/heading via `things-cli edit` now correctly appear under their parent instead of remaining in Inbox.
 
+## Bug 9: Base58 Encoder Dropped Leading Zero Bytes (2026-07-06)
+
+### The Problem
+
+Even after the Bug 5 fix switched UUID generation to Base58, accounts still intermittently accumulated items that crashed Things.app. The failure was probabilistic: everything worked for dozens of creates, then one item poisoned the history.
+
+### Root Cause
+
+The Base58 encoders in `things-cli` and `example/` (duplicated code) converted the UUID through `math/big`, which normalizes away leading zero bytes. Canonical Base58 represents each leading `0x00` byte as a leading `1` character; without that padding, a UUID whose first byte is zero encodes one character short and no longer decodes to 16 bytes. Byte 0 of a v4 UUID is fully random, so **~1 in 256 generated identifiers was malformed** — feeding the exact decoder (`BSIdentifierFromBase58String`, see Bug 5) whose array-bounds failure crashes the app.
+
+### Evidence
+
+- All identifiers captured from real Things.app traffic round-trip through a canonical encoder unchanged (`VJ1edXTP9q3PmFDUuy8EQh`, `FQxaqvLBkbR5q2Q5oRoknc`, `BVU8qZ9dNjrdxLvDHPvfDS`) — Things uses standard Bitcoin-style Base58 with leading-`1` padding.
+- Empirical: a UUID starting `0x00` encoded by the old code round-trips to only 15 bytes.
+
+### The Fix (v0.3.0)
+
+Moved a single canonical implementation into the SDK (`base58.go`): `EncodeUUID` emits one `1` per leading zero byte; `DecodeUUID` rejects anything that doesn't decode to exactly 16 bytes; `NewUUID()` is the one true generator. Defense in depth:
+
+- `History.Write()` validates every item UUID (and rejects duplicate UUIDs per commit) before anything reaches the server
+- `things-cli` validates all user-supplied identifiers (`--uuid`, `--project`, `--area`, `--heading`, `--tags`, positional targets)
+- Related hole closed: `create --type heading --when inbox` could still emit `tp=2, st=0` (Bug 6's crash payload) because the `--when` switch ran after the type switch; projects and headings now force `st=1` after all schedule processing
+
+### Verification
+
+TDD with real-traffic round-trip vectors; forced leading-zero-byte cases in the round-trip suite; 2000-draw canonical-validity test on the generator.
+
 ## Files Changed
 
 | File | Changes |
