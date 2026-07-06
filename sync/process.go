@@ -54,6 +54,15 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 		allChanges = append(allChanges, changes...)
 	}
 
+	// Persist the cursor in the same transaction as the batch it covers:
+	// either both land or neither does, so a resume never replays a
+	// committed batch or skips an uncommitted one.
+	if s.history != nil {
+		if err := s.saveSyncState(s.history.ID, s.history.LoadedServerIndex); err != nil {
+			return nil, fmt.Errorf("saving sync state: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}

@@ -4,7 +4,7 @@ package sync
 
 import (
 	"database/sql"
-	"strings"
+	"errors"
 	"time"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -65,14 +65,11 @@ func (s *Syncer) Close() error {
 
 // isRetryableError returns true if the error is a temporary server error worth retrying.
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
+	var httpErr *things.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 500 && httpErr.StatusCode <= 504
 	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "500") ||
-		strings.Contains(errStr, "502") ||
-		strings.Contains(errStr, "503") ||
-		strings.Contains(errStr, "504")
+	return false
 }
 
 // Sync fetches new items from Things Cloud, updates local state,
@@ -169,10 +166,10 @@ func (s *Syncer) Sync() ([]Change, error) {
 		hasMore = more
 	}
 
-	// Save sync state
-	if err := s.saveSyncState(s.history.ID, s.history.LatestServerIndex); err != nil {
-		return nil, err
-	}
+	// Sync state is persisted per batch inside processItems' transaction,
+	// so a mid-sync failure resumes exactly after the last committed batch
+	// instead of replaying it (replays double-apply note delta patches and
+	// duplicate change_log rows).
 
 	return allChanges, nil
 }
