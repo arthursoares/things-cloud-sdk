@@ -132,6 +132,9 @@ things-cli areas
 things-cli projects
 things-cli tags
 
+# Optional read-state cache location
+export THINGS_CLI_CACHE=/path/to/things-cli-state.json
+
 # Create
 things-cli create "Title" [--note ...] [--when today|anytime|someday|inbox] \
   [--deadline YYYY-MM-DD] [--scheduled YYYY-MM-DD] \
