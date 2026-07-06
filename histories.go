@@ -53,7 +53,9 @@ func (h *History) Sync() error {
 		return err
 	}
 	var v itemsResponse
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return fmt.Errorf("decoding history sync response: %w", err)
+	}
 	h.LatestServerIndex = v.CurrentItemIndex
 	h.LatestSchemaVersion = v.SchemaVersion
 	h.LatestTotalContentSize = v.LatestTotalContentSize
@@ -147,7 +149,9 @@ func (c *Client) Histories() ([]*History, error) {
 		return nil, err
 	}
 	var keys []string
-	json.Unmarshal(bs, &keys)
+	if err := json.Unmarshal(bs, &keys); err != nil {
+		return nil, fmt.Errorf("decoding history keys: %w", err)
+	}
 
 	var histories = make([]*History, len(keys))
 	for i, key := range keys {
@@ -187,7 +191,9 @@ func (c *Client) CreateHistory() (*History, error) {
 		return nil, err
 	}
 	var v createHistoryResponse
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return nil, fmt.Errorf("decoding create-history response: %w", err)
+	}
 	return &History{
 		Client: c,
 		ID:     v.Key,
@@ -274,7 +280,9 @@ func (h *History) Write(items ...Identifiable) error {
 		return err
 	}
 	var w commitResponse
-	json.Unmarshal(rs, &w)
+	if err := json.Unmarshal(rs, &w); err != nil {
+		return fmt.Errorf("decoding commit response: %w", err)
+	}
 	h.LatestServerIndex = w.ServerHeadIndex
 	return nil
 }
