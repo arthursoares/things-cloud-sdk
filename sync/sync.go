@@ -25,8 +25,8 @@ type dbExecutor interface {
 
 // Syncer manages persistent sync with Things Cloud
 type Syncer struct {
-	rawDB   *sql.DB     // underlying connection for Close() and Begin()
-	db      dbExecutor  // current executor (db or tx)
+	rawDB   *sql.DB    // underlying connection for Close() and Begin()
+	db      dbExecutor // current executor (db or tx)
 	client  *things.Client
 	history *things.History
 }
@@ -163,9 +163,9 @@ func (s *Syncer) Sync() ([]Change, error) {
 		}
 		allChanges = append(allChanges, changes...)
 
-		// Use server's current-item-index as next start position
-		// (not len(items) - items get expanded from nested structure)
-		startIndex = s.history.LatestServerIndex
+		// Use loaded server item-batches as the next start position.
+		// The expanded item count can differ from the server batch count.
+		startIndex = s.history.LoadedServerIndex
 		hasMore = more
 	}
 

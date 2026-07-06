@@ -130,6 +130,7 @@ func (c *Client) Histories() ([]*History, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
@@ -168,6 +169,7 @@ func (c *Client) CreateHistory() (*History, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
@@ -199,6 +201,7 @@ func (h *History) Delete() error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", h.Client.password))
 	resp, err := h.Client.do(req)
 	if err != nil {
 		return err
