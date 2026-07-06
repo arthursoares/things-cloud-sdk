@@ -45,7 +45,7 @@ func (h *History) Sync() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http response code: %s", resp.Status)
+		return &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 
 	bs, err := io.ReadAll(resp.Body)
@@ -75,7 +75,7 @@ func (c *Client) History(id string) (*History, error) {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return nil, ErrUnauthorized
 		}
-		return nil, fmt.Errorf("http response code: %s", resp.Status)
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	bs, err := io.ReadAll(resp.Body)
 	if err != nil {

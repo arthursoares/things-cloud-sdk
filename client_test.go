@@ -73,3 +73,12 @@ func TestClient_UserAgent(t *testing.T) {
 		t.Error("things-client-info header is missing or empty")
 	}
 }
+
+func TestNew_SetsHTTPTimeout(t *testing.T) {
+	t.Parallel()
+
+	c := New("https://example.com", "user@example.com", "pw")
+	if c.client.Timeout <= 0 {
+		t.Error("New() http.Client has no Timeout — a stalled connection hangs Sync forever")
+	}
+}

@@ -17,7 +17,7 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 			"index", today_index, in_trash, area_uuid, project_uuid, heading_uuid,
 			alarm_time_offset, recurrence_rule, deleted
 		FROM tasks
-		WHERE uuid = ?
+		WHERE uuid = ? AND deleted = 0
 	`, uuid)
 
 	var (
