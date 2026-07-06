@@ -302,13 +302,22 @@ state := syncer.State()
 inbox, _ := state.TasksInInbox(sync.QueryOpts{})
 today, _ := state.TasksInToday(sync.QueryOpts{})
 anytime, _ := state.TasksInAnytime(sync.QueryOpts{})
+someday, _ := state.TasksInSomeday(sync.QueryOpts{})
+upcoming, _ := state.TasksInUpcoming(sync.QueryOpts{})
 
 // Query by container
 tasks, _ := state.TasksInProject(projectUUID, sync.QueryOpts{})
 tasks, _ := state.TasksInArea(areaUUID, sync.QueryOpts{})
+tasks, _ := state.TasksUnderHeading(headingUUID, sync.QueryOpts{})
+headings, _ := state.HeadingsInProject(projectUUID, sync.QueryOpts{})
+
+// Query by tag or text
+tasks, _ := state.TasksWithTag(tagUUID, sync.QueryOpts{})
+tasks, _ := state.SearchTasks("invoice", sync.QueryOpts{})
 
 // List all
 projects, _ := state.AllProjects(sync.QueryOpts{})
+headings, _ := state.AllHeadings(sync.QueryOpts{})
 areas, _ := state.AllAreas(sync.QueryOpts{})
 tags, _ := state.AllTags(sync.QueryOpts{})
 ```
