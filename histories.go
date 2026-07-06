@@ -45,7 +45,7 @@ func (h *History) Sync() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http response code: %s", resp.Status)
+		return &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 
 	bs, err := io.ReadAll(resp.Body)
@@ -53,7 +53,9 @@ func (h *History) Sync() error {
 		return err
 	}
 	var v itemsResponse
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return fmt.Errorf("decoding history sync response: %w", err)
+	}
 	h.LatestServerIndex = v.CurrentItemIndex
 	h.LatestSchemaVersion = v.SchemaVersion
 	h.LatestTotalContentSize = v.LatestTotalContentSize
@@ -75,7 +77,7 @@ func (c *Client) History(id string) (*History, error) {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return nil, ErrUnauthorized
 		}
-		return nil, fmt.Errorf("http response code: %s", resp.Status)
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	bs, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -130,6 +132,7 @@ func (c *Client) Histories() ([]*History, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
@@ -146,7 +149,9 @@ func (c *Client) Histories() ([]*History, error) {
 		return nil, err
 	}
 	var keys []string
-	json.Unmarshal(bs, &keys)
+	if err := json.Unmarshal(bs, &keys); err != nil {
+		return nil, fmt.Errorf("decoding history keys: %w", err)
+	}
 
 	var histories = make([]*History, len(keys))
 	for i, key := range keys {
@@ -168,6 +173,7 @@ func (c *Client) CreateHistory() (*History, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
@@ -185,7 +191,9 @@ func (c *Client) CreateHistory() (*History, error) {
 		return nil, err
 	}
 	var v createHistoryResponse
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return nil, fmt.Errorf("decoding create-history response: %w", err)
+	}
 	return &History{
 		Client: c,
 		ID:     v.Key,
@@ -199,6 +207,7 @@ func (h *History) Delete() error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", h.Client.password))
 	resp, err := h.Client.do(req)
 	if err != nil {
 		return err
@@ -223,6 +232,17 @@ type Identifiable interface {
 func (h *History) Write(items ...Identifiable) error {
 	m := map[string]interface{}{}
 	for _, item := range items {
+		// A non-canonical identifier permanently corrupts the sync
+		// history: Things.app crashes decoding it and the item cannot
+		// be removed. Refuse it before anything reaches the server.
+		if err := ValidateUUID(item.UUID()); err != nil {
+			return fmt.Errorf("refusing to write item: %w", err)
+		}
+		// The commit body is a map keyed by UUID, so a second op on the
+		// same item would silently replace the first. Reject instead.
+		if _, dup := m[item.UUID()]; dup {
+			return fmt.Errorf("refusing to write items: duplicate UUID %s in one commit — split into separate Write calls", item.UUID())
+		}
 		m[item.UUID()] = item
 	}
 	bs, err := json.Marshal(m)
@@ -260,7 +280,9 @@ func (h *History) Write(items ...Identifiable) error {
 		return err
 	}
 	var w commitResponse
-	json.Unmarshal(rs, &w)
+	if err := json.Unmarshal(rs, &w); err != nil {
+		return fmt.Errorf("decoding commit response: %w", err)
+	}
 	h.LatestServerIndex = w.ServerHeadIndex
 	return nil
 }

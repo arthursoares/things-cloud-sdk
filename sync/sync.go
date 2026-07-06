@@ -4,7 +4,7 @@ package sync
 
 import (
 	"database/sql"
-	"strings"
+	"errors"
 	"time"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -25,8 +25,8 @@ type dbExecutor interface {
 
 // Syncer manages persistent sync with Things Cloud
 type Syncer struct {
-	rawDB   *sql.DB     // underlying connection for Close() and Begin()
-	db      dbExecutor  // current executor (db or tx)
+	rawDB   *sql.DB    // underlying connection for Close() and Begin()
+	db      dbExecutor // current executor (db or tx)
 	client  *things.Client
 	history *things.History
 }
@@ -65,14 +65,11 @@ func (s *Syncer) Close() error {
 
 // isRetryableError returns true if the error is a temporary server error worth retrying.
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
+	var httpErr *things.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 500 && httpErr.StatusCode <= 504
 	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "500") ||
-		strings.Contains(errStr, "502") ||
-		strings.Contains(errStr, "503") ||
-		strings.Contains(errStr, "504")
+	return false
 }
 
 // Sync fetches new items from Things Cloud, updates local state,
@@ -163,16 +160,16 @@ func (s *Syncer) Sync() ([]Change, error) {
 		}
 		allChanges = append(allChanges, changes...)
 
-		// Use server's current-item-index as next start position
-		// (not len(items) - items get expanded from nested structure)
-		startIndex = s.history.LatestServerIndex
+		// Use loaded server item-batches as the next start position.
+		// The expanded item count can differ from the server batch count.
+		startIndex = s.history.LoadedServerIndex
 		hasMore = more
 	}
 
-	// Save sync state
-	if err := s.saveSyncState(s.history.ID, s.history.LatestServerIndex); err != nil {
-		return nil, err
-	}
+	// Sync state is persisted per batch inside processItems' transaction,
+	// so a mid-sync failure resumes exactly after the last committed batch
+	// instead of replaying it (replays double-apply note delta patches and
+	// duplicate change_log rows).
 
 	return allChanges, nil
 }
@@ -250,14 +247,22 @@ func (s *Syncer) scanChangeLog(rows *sql.Rows) ([]Change, error) {
 			timestamp:   time.Unix(syncedAt, 0),
 		}
 
-		// Return UnknownChange with the change type as details
-		// A more complete implementation would reconstruct full typed changes
-		changes = append(changes, UnknownChange{
+		var rawPayload string
+		if payload.Valid {
+			rawPayload = payload.String
+		}
+
+		changes = append(changes, LoggedChange{
 			baseChange: base,
+			changeType: changeType,
 			entityType: entityType,
 			entityUUID: entityUUID,
-			Details:    changeType,
+			payload:    rawPayload,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return changes, nil

@@ -12,10 +12,12 @@ import (
 // Common items are the creation of a task, area or checklist, as well as modifying attributes
 // or marking things as done.
 type Item struct {
-	UUID   string          `json:"-"`
-	P      json.RawMessage `json:"p"`
-	Kind   ItemKind        `json:"e"`
-	Action ItemAction      `json:"t"`
+	UUID           string          `json:"-"`
+	P              json.RawMessage `json:"p"`
+	Kind           ItemKind        `json:"e"`
+	Action         ItemAction      `json:"t"`
+	ServerIndex    int             `json:"-"`
+	HasServerIndex bool            `json:"-"`
 }
 
 type itemsResponse struct {
@@ -53,7 +55,7 @@ func (h *History) Items(opts ItemsOptions) ([]Item, bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("http response code: %s", resp.Status)
+		return nil, false, &HTTPError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 
 	bs, err := io.ReadAll(resp.Body)
@@ -65,13 +67,16 @@ func (h *History) Items(opts ItemsOptions) ([]Item, bool, error) {
 		return nil, false, err
 	}
 	var items = []Item{}
-	for _, m := range v.Items {
+	for offset, m := range v.Items {
+		serverIndex := opts.StartIndex + offset
 		for id, item := range m {
 			item.UUID = id
+			item.ServerIndex = serverIndex
+			item.HasServerIndex = true
 			items = append(items, item)
 		}
 	}
-	h.LoadedServerIndex = h.LoadedServerIndex + len(v.Items)
+	h.LoadedServerIndex = opts.StartIndex + len(v.Items)
 	h.LatestServerIndex = v.CurrentItemIndex
 	h.EndTotalContentSize = v.EndTotalContentSize
 	h.LatestTotalContentSize = v.LatestTotalContentSize

@@ -19,9 +19,10 @@ go generate                # Regenerate stringer methods (itemaction_string.go)
 
 ## Architecture
 
-All source code lives at the package root (`package things`), with two sub-packages:
+All source code lives at the package root (`package thingscloud`, module `github.com/arthursoares/things-cloud-sdk`), with three sub-packages:
 - `state/memory` — In-memory state aggregation (for testing/simple use)
 - `sync` — Persistent SQLite-backed sync engine with semantic change detection
+- `syncutil` — Shared utilities for sync-based CLI tools
 
 ### Core Design: Event-Sourced Sync
 
@@ -79,6 +80,17 @@ Tests use `httptest.Server` with pre-recorded JSON responses in the `tapes/` dir
 
 `types.go` contains `//go:generate stringer -type ItemAction,TaskStatus,TaskSchedule`. Run `go generate` after modifying these enum types. Do not hand-edit `itemaction_string.go`.
 
+### Wire Format Rules (Crash-Critical)
+
+Violating these corrupts the sync history and crashes Things.app during sync — and a poisoned history cannot be repaired, only abandoned:
+
+- **UUIDs must be Base58-encoded** (Bitcoin alphabet: `123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz` — no `0`, `O`, `I`, `l`). Things.app decodes with `BSIdentifierFromBase58String()`; standard UUID strings crash it.
+- **`md` (modification date) must be `null` on creates.** Set a timestamp only on updates.
+- **Headings (`tp=2`) must have `st=1`** (anytime), never `st=0` (inbox). Tasks under projects/headings/areas should also default to `st=1`.
+- **Kind strings**: `Task6`, `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2`. Using `Area2` is silently ignored by Things.app.
+
+See `docs/client-side-bugs.md` for the full crash investigations behind each rule.
+
 ### Schedule Field (`st`) Mapping
 
 The `st` JSON field maps to the `start` column in Things' SQLite DB. It represents a task's start state, **not** which UI view it belongs to. The view is determined by `st` + `sr`/`tir` dates:
@@ -90,6 +102,8 @@ The `st` JSON field maps to the `start` column in Things' SQLite DB. It represen
 | 1 | `TaskScheduleAnytime` | null | Anytime |
 | 2 | `TaskScheduleSomeday` | future date | Upcoming |
 | 2 | `TaskScheduleSomeday` | null | Someday |
+
+Don't confuse `st` (schedule) with `ss` (status): `ss` is completion state — `0` = pending, `2` = canceled, `3` = completed (with `sp` set to the completion timestamp).
 
 See `docs/client-side-bugs.md` for the full investigation.
 

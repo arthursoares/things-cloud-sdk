@@ -621,6 +621,37 @@ func (c UnknownChange) EntityUUID() string {
 	return c.entityUUID
 }
 
+// LoggedChange represents a semantic change restored from the persisted change log.
+// It preserves the stored change type and metadata, but not type-specific fields
+// that are not persisted in the current schema.
+type LoggedChange struct {
+	baseChange
+	changeType string
+	entityType string
+	entityUUID string
+	payload    string
+}
+
+// ChangeType returns the persisted semantic change type.
+func (c LoggedChange) ChangeType() string {
+	return c.changeType
+}
+
+// EntityType returns the persisted entity type.
+func (c LoggedChange) EntityType() string {
+	return c.entityType
+}
+
+// EntityUUID returns the persisted entity UUID.
+func (c LoggedChange) EntityUUID() string {
+	return c.entityUUID
+}
+
+// Payload returns the raw item payload stored with the change log entry.
+func (c LoggedChange) Payload() string {
+	return c.payload
+}
+
 // Compile-time interface implementation checks
 var (
 	_ Change = (*TaskCreated)(nil)
@@ -669,4 +700,5 @@ var (
 	_ Change = (*ChecklistItemTitleChanged)(nil)
 
 	_ Change = (*UnknownChange)(nil)
+	_ Change = (*LoggedChange)(nil)
 )

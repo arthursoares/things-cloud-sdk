@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 )
 
 const (
@@ -78,7 +79,9 @@ func New(endpoint, email, password string) *Client {
 		password:   password,
 		ClientInfo: DefaultClientInfo(),
 
-		client: &http.Client{},
+		// A stalled connection must not hang Sync forever; large initial
+		// syncs (thousands of items) still finish well within this.
+		client: &http.Client{Timeout: 60 * time.Second},
 	}
 	c.common.client = c
 	c.Accounts = (*AccountService)(&c.common)
@@ -87,6 +90,18 @@ func New(endpoint, email, password string) *Client {
 
 // ThingsUserAgent is the http user-agent header set by things for mac
 const ThingsUserAgent = "ThingsMac/32209501"
+
+// HTTPError is returned when the Things Cloud server responds with an
+// unexpected status code. Callers can inspect StatusCode with errors.As
+// to decide whether a request is worth retrying.
+type HTTPError struct {
+	StatusCode int
+	Status     string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("http response code: %s", e.Status)
+}
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {
 	if req.Host == "" {

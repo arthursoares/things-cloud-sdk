@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
-	"math/big"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	thingscloud "github.com/arthursoares/things-cloud-sdk"
 	memory "github.com/arthursoares/things-cloud-sdk/state/memory"
 )
@@ -92,15 +92,15 @@ type TaskCreatePayload struct {
 
 // ChecklistItemCreatePayload — all 9 fields for checklist item creation.
 type ChecklistItemCreatePayload struct {
-	Cd   float64       `json:"cd"`
-	Md   *float64      `json:"md"`
-	Tt   string        `json:"tt"`
-	Ss   int           `json:"ss"`
-	Sp   *float64      `json:"sp"`
-	Ix   int           `json:"ix"`
-	Ts   []string      `json:"ts"`
-	Lt   bool          `json:"lt"`
-	Xx   WireExtension `json:"xx"`
+	Cd float64       `json:"cd"`
+	Md *float64      `json:"md"`
+	Tt string        `json:"tt"`
+	Ss int           `json:"ss"`
+	Sp *float64      `json:"sp"`
+	Ix int           `json:"ix"`
+	Ts []string      `json:"ts"`
+	Lt bool          `json:"lt"`
+	Xx WireExtension `json:"xx"`
 }
 
 // TagCreatePayload — all 5 fields for tag creation.
@@ -133,22 +133,50 @@ func defaultExtension() WireExtension {
 }
 
 func generateUUID() string {
-	u := uuid.New()
-	// Base58 alphabet (Bitcoin/Flickr): no 0, O, I, l
-	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-	n := new(big.Int).SetBytes(u[:])
-	base := big.NewInt(58)
-	mod := new(big.Int)
-	var encoded []byte
-	for n.Sign() > 0 {
-		n.DivMod(n, base, mod)
-		encoded = append(encoded, alphabet[mod.Int64()])
+	return thingscloud.NewUUID()
+}
+
+// validateIdentifierOpts checks every option that carries a Things
+// identifier. Invalid identifiers written to the cloud poison the sync
+// history irreparably, so they must be rejected before any write.
+func validateIdentifierOpts(opts map[string]string) error {
+	for _, key := range []string{"uuid", "project", "heading", "area"} {
+		if v, ok := opts[key]; ok && v != "" {
+			if err := thingscloud.ValidateUUID(v); err != nil {
+				return fmt.Errorf("--%s: %w", key, err)
+			}
+		}
 	}
-	// Reverse (big-endian)
-	for i, j := 0, len(encoded)-1; i < j; i, j = i+1, j-1 {
-		encoded[i], encoded[j] = encoded[j], encoded[i]
+	if v, ok := opts["tags"]; ok && v != "" {
+		for _, tag := range strings.Split(v, ",") {
+			if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+				return fmt.Errorf("--tags: %w", err)
+			}
+		}
 	}
-	return string(encoded)
+	return nil
+}
+
+// validateBatchOpIdentifiers rejects a batch op carrying any invalid
+// Things identifier, for the same reason as validateIdentifierOpts.
+func validateBatchOpIdentifiers(op BatchOp) error {
+	check := map[string]string{
+		"uuid": op.UUID, "project": op.Project, "area": op.Area, "heading": op.Heading,
+	}
+	for name, v := range check {
+		if v == "" {
+			continue
+		}
+		if err := thingscloud.ValidateUUID(v); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	for _, tag := range op.Tags {
+		if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+			return fmt.Errorf("tags: %w", err)
+		}
+	}
+	return nil
 }
 
 func nowTs() float64 {
@@ -182,6 +210,12 @@ func parseArgs(args []string) map[string]string {
 		}
 	}
 	return result
+}
+
+func hasExplicitSchedule(opts map[string]string) bool {
+	_, hasWhen := opts["when"]
+	_, hasScheduled := opts["scheduled"]
+	return hasWhen || hasScheduled
 }
 
 func fatal(op string, err error) {
@@ -240,7 +274,6 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 			tp = 1
 		case "heading":
 			tp = 2
-			st = 1 // headings are structural — always "started" (anytime), never inbox
 		}
 	}
 
@@ -259,6 +292,12 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 		case "inbox":
 			st = 0
 		}
+	}
+
+	// Projects and headings are structural — never inbox (st=0). A heading
+	// with st=0 crashes Things.app; this must win over any --when value.
+	if tp != 0 && st == 0 {
+		st = 1
 	}
 
 	// --note
@@ -409,6 +448,27 @@ func (u *taskUpdate) Schedule(st int, sr, tir any) *taskUpdate {
 	return u
 }
 
+func (u *taskUpdate) Today() *taskUpdate {
+	today := todayMidnightUTC()
+	return u.Schedule(1, today, today)
+}
+
+func (u *taskUpdate) Anytime() *taskUpdate {
+	return u.Schedule(1, nil, nil)
+}
+
+func (u *taskUpdate) Someday() *taskUpdate {
+	return u.Schedule(2, nil, nil)
+}
+
+func (u *taskUpdate) Inbox() *taskUpdate {
+	return u.Schedule(0, nil, nil)
+}
+
+func (u *taskUpdate) ScheduleDate(ts int64) *taskUpdate {
+	return u.Schedule(1, ts, ts)
+}
+
 func (u *taskUpdate) Deadline(dd int64) *taskUpdate {
 	u.fields["dd"] = dd
 	return u
@@ -453,7 +513,78 @@ type cliContext struct {
 	history *thingscloud.History
 }
 
-func initCLI() *cliContext {
+type cliStateCache struct {
+	HistoryID   string        `json:"historyId"`
+	ServerIndex int           `json:"serverIndex"`
+	State       *memory.State `json:"state"`
+}
+
+func commandNeedsHistoryHead(cmd string) bool {
+	switch cmd {
+	case "create", "create-area", "create-tag", "add-checklist", "edit", "complete", "trash", "purge", "move-to-today", "batch":
+		return true
+	default:
+		return false
+	}
+}
+
+func cliStateCachePath() string {
+	if path := os.Getenv("THINGS_CLI_CACHE"); path != "" {
+		return path
+	}
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "things-cloud-sdk", "things-cli-state.json")
+	}
+	return filepath.Join(os.TempDir(), "things-cloud-sdk", "things-cli-state.json")
+}
+
+func loadCLIStateCache(path string) (*cliStateCache, error) {
+	bs, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var cache cliStateCache
+	if err := json.Unmarshal(bs, &cache); err != nil {
+		return nil, err
+	}
+	if cache.State == nil {
+		cache.State = memory.NewState()
+	} else {
+		normalizeMemoryState(cache.State)
+	}
+	return &cache, nil
+}
+
+func normalizeMemoryState(state *memory.State) {
+	if state.Areas == nil {
+		state.Areas = map[string]*thingscloud.Area{}
+	}
+	if state.Tasks == nil {
+		state.Tasks = map[string]*thingscloud.Task{}
+	}
+	if state.Tags == nil {
+		state.Tags = map[string]*thingscloud.Tag{}
+	}
+	if state.CheckListItems == nil {
+		state.CheckListItems = map[string]*thingscloud.CheckListItem{}
+	}
+}
+
+func saveCLIStateCache(path string, cache *cliStateCache) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	bs, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, bs, 0o600)
+}
+
+func initCLI(syncHistoryHead bool) *cliContext {
 	username := requireEnv("THINGS_USERNAME")
 	password := requireEnv("THINGS_PASSWORD")
 
@@ -470,30 +601,69 @@ func initCLI() *cliContext {
 	if err != nil {
 		fatal("get history", err)
 	}
-	if err := history.Sync(); err != nil {
-		fatal("sync history", err)
+	if syncHistoryHead {
+		if err := history.Sync(); err != nil {
+			fatal("sync history", err)
+		}
 	}
 
 	return &cliContext{client: c, history: history}
 }
 
+func (ctx *cliContext) serverIndex() int {
+	history, err := ctx.client.History(ctx.history.ID)
+	if err != nil {
+		fatal("get server index", err)
+	}
+	return history.LatestServerIndex
+}
+
 func (ctx *cliContext) loadState() *memory.State {
-	var allItems []thingscloud.Item
+	cachePath := cliStateCachePath()
+	cache, err := loadCLIStateCache(cachePath)
+	if err != nil {
+		fatal("load state cache", err)
+	}
+
+	state := memory.NewState()
 	startIndex := 0
+	if cache != nil && cache.HistoryID == ctx.history.ID {
+		state = cache.State
+		startIndex = cache.ServerIndex
+	}
+
+	latestServerIndex := ctx.serverIndex()
+	if startIndex > latestServerIndex {
+		state = memory.NewState()
+		startIndex = 0
+	}
+
 	for {
+		if startIndex >= latestServerIndex {
+			break
+		}
+		ctx.history.LoadedServerIndex = startIndex
 		items, hasMore, err := ctx.history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
 		if err != nil {
 			fatal("fetch items", err)
 		}
-		allItems = append(allItems, items...)
+		if err := state.Update(items...); err != nil {
+			fatal("update state", err)
+		}
+		startIndex = ctx.history.LoadedServerIndex
 		if !hasMore {
 			break
 		}
-		startIndex = ctx.history.LoadedServerIndex
 	}
 
-	state := memory.NewState()
-	state.Update(allItems...)
+	if err := saveCLIStateCache(cachePath, &cliStateCache{
+		HistoryID:   ctx.history.ID,
+		ServerIndex: startIndex,
+		State:       state,
+	}); err != nil {
+		fatal("save state cache", err)
+	}
+
 	return state
 }
 
@@ -539,9 +709,16 @@ func taskToOutput(t *thingscloud.Task) TaskOutput {
 	return out
 }
 
-func cmdList(state *memory.State, args []string) {
-	opts := parseArgs(args)
-	todayStart := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.UTC)
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func listTasks(state *memory.State, opts map[string]string) []TaskOutput {
+	now := time.Now().UTC()
+	tomorrowStart := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	searchQuery := strings.ToLower(strings.TrimSpace(opts["search"]))
 
 	var tasks []TaskOutput
 	for _, task := range state.Tasks {
@@ -551,12 +728,34 @@ func cmdList(state *memory.State, args []string) {
 
 		// Filters
 		if _, ok := opts["today"]; ok {
-			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !task.ScheduledDate.Equal(todayStart) {
+			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !sameDay(*task.ScheduledDate, now) {
 				continue
 			}
 		}
 		if _, ok := opts["inbox"]; ok {
 			if task.Schedule != thingscloud.TaskScheduleInbox {
+				continue
+			}
+		}
+		if _, ok := opts["anytime"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate != nil {
+				continue
+			}
+		}
+		if _, ok := opts["someday"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleSomeday || task.ScheduledDate != nil {
+				continue
+			}
+		}
+		if _, ok := opts["upcoming"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleSomeday || task.ScheduledDate == nil || task.ScheduledDate.Before(tomorrowStart) {
+				continue
+			}
+		}
+		if searchQuery != "" {
+			title := strings.ToLower(task.Title)
+			note := strings.ToLower(task.Note)
+			if !strings.Contains(title, searchQuery) && !strings.Contains(note, searchQuery) {
 				continue
 			}
 		}
@@ -568,14 +767,38 @@ func cmdList(state *memory.State, args []string) {
 		}
 		if projectName, ok := opts["project"]; ok {
 			projectUUID := findProjectUUID(state, projectName)
-			if !containsStr(task.ActionGroupIDs, projectUUID) {
+			if !containsStr(task.ParentTaskIDs, projectUUID) {
 				continue
 			}
 		}
 
 		tasks = append(tasks, taskToOutput(task))
 	}
-	outputJSON(tasks)
+
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].ScheduledDate != nil && tasks[j].ScheduledDate != nil && *tasks[i].ScheduledDate != *tasks[j].ScheduledDate {
+			return *tasks[i].ScheduledDate < *tasks[j].ScheduledDate
+		}
+		if tasks[i].Title != tasks[j].Title {
+			return tasks[i].Title < tasks[j].Title
+		}
+		return tasks[i].UUID < tasks[j].UUID
+	})
+
+	return tasks
+}
+
+func cmdList(state *memory.State, args []string) {
+	outputJSON(listTasks(state, parseArgs(args)))
+}
+
+func cmdListWithOpts(state *memory.State, opts map[string]string) {
+	outputJSON(listTasks(state, opts))
+}
+
+func cmdSearch(state *memory.State, args []string) {
+	requireArgs(args, 1, "things-cli search <query>")
+	cmdListWithOpts(state, map[string]string{"search": strings.Join(args, " ")})
 }
 
 func cmdShow(state *memory.State, uuid string) {
@@ -690,6 +913,9 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create task", err)
+	}
 
 	taskUUID := opts["uuid"]
 	if taskUUID == "" {
@@ -712,6 +938,9 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 func cmdAddChecklist(history *thingscloud.History, taskUUID string, args []string) {
 	requireArgs(args, 1, `things-cli add-checklist <task-uuid> "Item 1,Item 2,Item 3"`)
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("add-checklist", err)
+	}
 
 	items := strings.Split(args[0], ",")
 	cmdWriteChecklistItems(history, taskUUID, items)
@@ -723,6 +952,12 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	opts := parseArgs(args)
 	if len(opts) == 0 {
 		fatalf("Usage: things-cli edit <uuid> [--title ...] [--note ...] [--when today|anytime|someday|inbox] [--deadline YYYY-MM-DD] [--scheduled YYYY-MM-DD] [--area UUID] [--project UUID] [--heading UUID] [--tags UUID,...]")
+	}
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("edit", err)
+	}
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("edit", err)
 	}
 
 	u := newTaskUpdate()
@@ -740,14 +975,13 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	if v, ok := opts["when"]; ok {
 		switch v {
 		case "today":
-			today := todayMidnightUTC()
-			u.Schedule(1, today, today)
+			u.Today()
 		case "anytime":
-			u.Schedule(1, nil, nil)
+			u.Anytime()
 		case "someday":
-			u.Schedule(2, nil, nil)
+			u.Someday()
 		case "inbox":
-			u.Schedule(0, nil, nil)
+			u.Inbox()
 		}
 	}
 	if v, ok := opts["deadline"]; ok {
@@ -760,29 +994,29 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 			ts := t.Unix()
 			u.Scheduled(ts, ts)
 			if _, hasWhen := opts["when"]; !hasWhen {
-				u.Schedule(1, ts, ts)
+				u.ScheduleDate(ts)
 			}
 		}
 	}
 	if v, ok := opts["area"]; ok && v != "" {
 		u.Area(v)
-		// When adding an area, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding an area, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["project"]; ok && v != "" {
 		u.Project(v)
-		// When adding a project, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding a project, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["heading"]; ok && v != "" {
 		u.Heading(v)
-		// When adding a heading, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding a heading, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["tags"]; ok && v != "" {
@@ -836,8 +1070,7 @@ func cmdPurge(history *thingscloud.History, taskUUID string) {
 }
 
 func cmdMoveToToday(history *thingscloud.History, taskUUID string) {
-	today := todayMidnightUTC()
-	u := newTaskUpdate().Schedule(1, today, today)
+	u := newTaskUpdate().Today()
 
 	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
 	if err := history.Write(env); err != nil {
@@ -999,6 +1232,9 @@ func buildBatchCreate(op BatchOp) (thingscloud.Identifiable, map[string]string, 
 	if op.Title == "" {
 		return nil, nil, fmt.Errorf("create requires title")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
 	taskUUID := op.UUID
 	if taskUUID == "" {
@@ -1084,8 +1320,7 @@ func buildBatchMoveToToday(op BatchOp) (thingscloud.Identifiable, map[string]str
 		return nil, nil, fmt.Errorf("move-to-today requires uuid")
 	}
 
-	today := todayMidnightUTC()
-	u := newTaskUpdate().Schedule(1, today, today)
+	u := newTaskUpdate().Today()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-today", "uuid": op.UUID}, nil
@@ -1098,8 +1333,11 @@ func buildBatchMoveToProject(op BatchOp) (thingscloud.Identifiable, map[string]s
 	if op.Project == "" {
 		return nil, nil, fmt.Errorf("move-to-project requires project")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
-	u := newTaskUpdate().Project(op.Project).Schedule(1, 0, 0)
+	u := newTaskUpdate().Project(op.Project).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-project", "uuid": op.UUID, "project": op.Project}, nil
@@ -1112,8 +1350,11 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 	if op.Area == "" {
 		return nil, nil, fmt.Errorf("move-to-area requires area")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
-	u := newTaskUpdate().Area(op.Area).Schedule(1, 0, 0)
+	u := newTaskUpdate().Area(op.Area).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-area", "uuid": op.UUID, "area": op.Area}, nil
@@ -1122,6 +1363,9 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
 	if op.UUID == "" {
 		return nil, nil, fmt.Errorf("edit requires uuid")
+	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
 	}
 
 	u := newTaskUpdate()
@@ -1135,14 +1379,13 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 	if op.When != "" {
 		switch op.When {
 		case "today":
-			today := todayMidnightUTC()
-			u.Schedule(1, today, today)
+			u.Today()
 		case "anytime":
-			u.Schedule(1, nil, nil)
+			u.Anytime()
 		case "someday":
-			u.Schedule(2, nil, nil)
+			u.Someday()
 		case "inbox":
-			u.Schedule(0, nil, nil)
+			u.Inbox()
 		}
 	}
 	if op.Deadline != "" {
@@ -1153,19 +1396,19 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 	if op.Project != "" {
 		u.Project(op.Project)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if op.Area != "" {
 		u.Area(op.Area)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if op.Heading != "" {
 		u.Heading(op.Heading)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if len(op.Tags) > 0 {
@@ -1184,12 +1427,21 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: things-cli <command> [args]
 
-Read commands (load state from cloud):
-  list [--today] [--inbox] [--area NAME] [--project NAME]
+Read commands (use an incremental local state cache):
+  list [--today] [--inbox] [--anytime] [--someday] [--upcoming] [--search QUERY] [--area NAME] [--project NAME]
+  today
+  inbox
+  anytime
+  someday
+  upcoming
+  search <query>
   show <uuid>
   areas
   projects
   tags
+
+Environment:
+  THINGS_CLI_CACHE=/path/to/things-cli-state.json  Override read-state cache file
 
 Write commands (fast — skip state loading):
   create "Title" [--note ...] [--when today|anytime|someday|inbox]
@@ -1231,13 +1483,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := initCLI()
 	cmd := os.Args[1]
+	ctx := initCLI(commandNeedsHistoryHead(cmd))
 
 	switch cmd {
 	// Read commands — need state
 	case "list":
 		cmdList(ctx.loadState(), os.Args[2:])
+	case "today":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"today": "true"})
+	case "inbox":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"inbox": "true"})
+	case "anytime":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"anytime": "true"})
+	case "someday":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"someday": "true"})
+	case "upcoming":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"upcoming": "true"})
+	case "search":
+		cmdSearch(ctx.loadState(), os.Args[2:])
 	case "show":
 		requireArgs(os.Args[2:], 1, "things-cli show <uuid>")
 		cmdShow(ctx.loadState(), os.Args[2])

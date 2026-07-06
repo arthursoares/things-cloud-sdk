@@ -63,7 +63,12 @@ var (
 	ItemKindTask4     ItemKind = "Task4"
 	ItemKindTask3     ItemKind = "Task3"
 	ItemKindTaskPlain ItemKind = "Task"
-	// ItemKindArea identifies an Area
+	// ItemKindArea identifies an Area in the legacy Area2 encoding.
+	//
+	// Deprecated: never WRITE items with this kind — Things.app silently
+	// ignores Area2 creates and manufactures a duplicate area with a new
+	// UUID. Use ItemKindArea3. Reading Area2 items from old histories is
+	// still supported.
 	ItemKindArea      ItemKind = "Area2"
 	ItemKindArea3     ItemKind = "Area3"
 	ItemKindAreaPlain ItemKind = "Area"

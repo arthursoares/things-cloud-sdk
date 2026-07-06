@@ -15,8 +15,14 @@ Or create a `.env` file and source it: `source .env`
 Full-featured CLI for CRUD operations on Things Cloud.
 
 ```bash
-# Read operations (loads full state)
-things-cli list [--today] [--inbox] [--area NAME] [--project NAME]
+# Read operations (uses an incremental local state cache)
+things-cli list [--today] [--inbox] [--anytime] [--someday] [--upcoming] [--search QUERY] [--area NAME] [--project NAME]
+things-cli today
+things-cli inbox
+things-cli anytime
+things-cli someday
+things-cli upcoming
+things-cli search <query>
 things-cli show <uuid>
 things-cli areas
 things-cli projects
@@ -40,6 +46,9 @@ echo '[
 
 # Batch commands: create, complete, trash, purge, move-to-today,
 #                 move-to-project, move-to-area, edit
+
+# Optional read-state cache location:
+#   THINGS_CLI_CACHE=/path/to/things-cli-state.json
 
 # Create options:
 #   --note "text"           Add a note

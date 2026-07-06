@@ -126,11 +126,20 @@ go build -o things-cli ./cmd/things-cli/
 
 ```bash
 # Read
-things-cli list [--today] [--inbox] [--area NAME] [--project NAME]
+things-cli list [--today] [--inbox] [--anytime] [--someday] [--upcoming] [--search QUERY] [--area NAME] [--project NAME]
+things-cli today
+things-cli inbox
+things-cli anytime
+things-cli someday
+things-cli upcoming
+things-cli search <query>
 things-cli show <uuid>
 things-cli areas
 things-cli projects
 things-cli tags
+
+# Optional read-state cache location
+export THINGS_CLI_CACHE=/path/to/things-cli-state.json
 
 # Create
 things-cli create "Title" [--note ...] [--when today|anytime|someday|inbox] \
@@ -302,13 +311,22 @@ state := syncer.State()
 inbox, _ := state.TasksInInbox(sync.QueryOpts{})
 today, _ := state.TasksInToday(sync.QueryOpts{})
 anytime, _ := state.TasksInAnytime(sync.QueryOpts{})
+someday, _ := state.TasksInSomeday(sync.QueryOpts{})
+upcoming, _ := state.TasksInUpcoming(sync.QueryOpts{})
 
 // Query by container
 tasks, _ := state.TasksInProject(projectUUID, sync.QueryOpts{})
 tasks, _ := state.TasksInArea(areaUUID, sync.QueryOpts{})
+tasks, _ := state.TasksUnderHeading(headingUUID, sync.QueryOpts{})
+headings, _ := state.HeadingsInProject(projectUUID, sync.QueryOpts{})
+
+// Query by tag or text
+tasks, _ := state.TasksWithTag(tagUUID, sync.QueryOpts{})
+tasks, _ := state.SearchTasks("invoice", sync.QueryOpts{})
 
 // List all
 projects, _ := state.AllProjects(sync.QueryOpts{})
+headings, _ := state.AllHeadings(sync.QueryOpts{})
 areas, _ := state.AllAreas(sync.QueryOpts{})
 tags, _ := state.AllTags(sync.QueryOpts{})
 ```
