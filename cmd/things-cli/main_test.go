@@ -472,3 +472,23 @@ func TestBuildBatchEditRejectsInvalidRef(t *testing.T) {
 		t.Error("buildBatchEdit with invalid target UUID: got nil error, want validation error")
 	}
 }
+
+func TestNewTaskCreatePayloadStructuralTypesNeverInbox(t *testing.T) {
+	cases := []struct {
+		name string
+		opts map[string]string
+	}{
+		{"project default", map[string]string{"type": "project"}},
+		{"project explicit inbox", map[string]string{"type": "project", "when": "inbox"}},
+		{"heading default", map[string]string{"type": "heading"}},
+		{"heading explicit inbox", map[string]string{"type": "heading", "when": "inbox"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := newTaskCreatePayload("x", tc.opts)
+			if payload.St != 1 {
+				t.Errorf("st = %d, want 1 — structural items (tp=%d) in inbox corrupt the sync history", payload.St, payload.Tp)
+			}
+		})
+	}
+}
