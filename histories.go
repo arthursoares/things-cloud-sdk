@@ -226,6 +226,12 @@ type Identifiable interface {
 func (h *History) Write(items ...Identifiable) error {
 	m := map[string]interface{}{}
 	for _, item := range items {
+		// A non-canonical identifier permanently corrupts the sync
+		// history: Things.app crashes decoding it and the item cannot
+		// be removed. Refuse it before anything reaches the server.
+		if err := ValidateUUID(item.UUID()); err != nil {
+			return fmt.Errorf("refusing to write item: %w", err)
+		}
 		m[item.UUID()] = item
 	}
 	bs, err := json.Marshal(m)

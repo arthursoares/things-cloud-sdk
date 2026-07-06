@@ -3,32 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	thingscloud "github.com/arthursoares/things-cloud-sdk"
 	memory "github.com/arthursoares/things-cloud-sdk/state/memory"
 )
-
-// base58Encode encodes a UUID as a Base58 string using the Bitcoin alphabet.
-// Things.app requires Base58-encoded UUIDs — standard UUID strings will crash the client.
-func base58Encode(u uuid.UUID) string {
-	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-	n := new(big.Int).SetBytes(u[:])
-	base := big.NewInt(58)
-	mod := new(big.Int)
-	var encoded []byte
-	for n.Sign() > 0 {
-		n.DivMod(n, base, mod)
-		encoded = append(encoded, alphabet[mod.Int64()])
-	}
-	for i, j := 0, len(encoded)-1; i < j; i, j = i+1, j-1 {
-		encoded[i], encoded[j] = encoded[j], encoded[i]
-	}
-	return string(encoded)
-}
 
 func printTag(tag *thingscloud.Tag, state *memory.State, indent string) {
 	fmt.Printf("%s-\t%s\n", indent, tag.Title)
@@ -114,7 +94,7 @@ func main() {
 
 	pending := thingscloud.TaskStatusPending
 	anytime := thingscloud.TaskScheduleAnytime
-	taskUUID := base58Encode(uuid.New())
+	taskUUID := thingscloud.NewUUID()
 	now := thingscloud.Timestamp(time.Now())
 	date := thingscloud.Timestamp(time.Now().Truncate(24 * time.Hour))
 	todayIdx := 0
