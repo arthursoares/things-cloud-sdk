@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	thingscloud "github.com/arthursoares/things-cloud-sdk"
 	memory "github.com/arthursoares/things-cloud-sdk/state/memory"
+	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -92,15 +92,15 @@ type TaskCreatePayload struct {
 
 // ChecklistItemCreatePayload — all 9 fields for checklist item creation.
 type ChecklistItemCreatePayload struct {
-	Cd   float64       `json:"cd"`
-	Md   *float64      `json:"md"`
-	Tt   string        `json:"tt"`
-	Ss   int           `json:"ss"`
-	Sp   *float64      `json:"sp"`
-	Ix   int           `json:"ix"`
-	Ts   []string      `json:"ts"`
-	Lt   bool          `json:"lt"`
-	Xx   WireExtension `json:"xx"`
+	Cd float64       `json:"cd"`
+	Md *float64      `json:"md"`
+	Tt string        `json:"tt"`
+	Ss int           `json:"ss"`
+	Sp *float64      `json:"sp"`
+	Ix int           `json:"ix"`
+	Ts []string      `json:"ts"`
+	Lt bool          `json:"lt"`
+	Xx WireExtension `json:"xx"`
 }
 
 // TagCreatePayload — all 5 fields for tag creation.
@@ -182,6 +182,12 @@ func parseArgs(args []string) map[string]string {
 		}
 	}
 	return result
+}
+
+func hasExplicitSchedule(opts map[string]string) bool {
+	_, hasWhen := opts["when"]
+	_, hasScheduled := opts["scheduled"]
+	return hasWhen || hasScheduled
 }
 
 func fatal(op string, err error) {
@@ -407,6 +413,27 @@ func (u *taskUpdate) Schedule(st int, sr, tir any) *taskUpdate {
 	u.fields["sr"] = sr
 	u.fields["tir"] = tir
 	return u
+}
+
+func (u *taskUpdate) Today() *taskUpdate {
+	today := todayMidnightUTC()
+	return u.Schedule(1, today, today)
+}
+
+func (u *taskUpdate) Anytime() *taskUpdate {
+	return u.Schedule(1, nil, nil)
+}
+
+func (u *taskUpdate) Someday() *taskUpdate {
+	return u.Schedule(2, nil, nil)
+}
+
+func (u *taskUpdate) Inbox() *taskUpdate {
+	return u.Schedule(0, nil, nil)
+}
+
+func (u *taskUpdate) ScheduleDate(ts int64) *taskUpdate {
+	return u.Schedule(1, ts, ts)
 }
 
 func (u *taskUpdate) Deadline(dd int64) *taskUpdate {
@@ -740,14 +767,13 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	if v, ok := opts["when"]; ok {
 		switch v {
 		case "today":
-			today := todayMidnightUTC()
-			u.Schedule(1, today, today)
+			u.Today()
 		case "anytime":
-			u.Schedule(1, nil, nil)
+			u.Anytime()
 		case "someday":
-			u.Schedule(2, nil, nil)
+			u.Someday()
 		case "inbox":
-			u.Schedule(0, nil, nil)
+			u.Inbox()
 		}
 	}
 	if v, ok := opts["deadline"]; ok {
@@ -760,29 +786,29 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 			ts := t.Unix()
 			u.Scheduled(ts, ts)
 			if _, hasWhen := opts["when"]; !hasWhen {
-				u.Schedule(1, ts, ts)
+				u.ScheduleDate(ts)
 			}
 		}
 	}
 	if v, ok := opts["area"]; ok && v != "" {
 		u.Area(v)
-		// When adding an area, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding an area, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["project"]; ok && v != "" {
 		u.Project(v)
-		// When adding a project, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding a project, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["heading"]; ok && v != "" {
 		u.Heading(v)
-		// When adding a heading, also move out of Inbox (st=0 → st=1)
-		if _, hasWhen := opts["when"]; !hasWhen {
-			u.Schedule(1, 0, 0) // Anytime
+		// When adding a heading, also move out of Inbox unless a schedule was explicit.
+		if !hasExplicitSchedule(opts) {
+			u.Anytime()
 		}
 	}
 	if v, ok := opts["tags"]; ok && v != "" {
@@ -836,8 +862,7 @@ func cmdPurge(history *thingscloud.History, taskUUID string) {
 }
 
 func cmdMoveToToday(history *thingscloud.History, taskUUID string) {
-	today := todayMidnightUTC()
-	u := newTaskUpdate().Schedule(1, today, today)
+	u := newTaskUpdate().Today()
 
 	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
 	if err := history.Write(env); err != nil {
@@ -1084,8 +1109,7 @@ func buildBatchMoveToToday(op BatchOp) (thingscloud.Identifiable, map[string]str
 		return nil, nil, fmt.Errorf("move-to-today requires uuid")
 	}
 
-	today := todayMidnightUTC()
-	u := newTaskUpdate().Schedule(1, today, today)
+	u := newTaskUpdate().Today()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-today", "uuid": op.UUID}, nil
@@ -1099,7 +1123,7 @@ func buildBatchMoveToProject(op BatchOp) (thingscloud.Identifiable, map[string]s
 		return nil, nil, fmt.Errorf("move-to-project requires project")
 	}
 
-	u := newTaskUpdate().Project(op.Project).Schedule(1, 0, 0)
+	u := newTaskUpdate().Project(op.Project).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-project", "uuid": op.UUID, "project": op.Project}, nil
@@ -1113,7 +1137,7 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 		return nil, nil, fmt.Errorf("move-to-area requires area")
 	}
 
-	u := newTaskUpdate().Area(op.Area).Schedule(1, 0, 0)
+	u := newTaskUpdate().Area(op.Area).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-area", "uuid": op.UUID, "area": op.Area}, nil
@@ -1135,14 +1159,13 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 	if op.When != "" {
 		switch op.When {
 		case "today":
-			today := todayMidnightUTC()
-			u.Schedule(1, today, today)
+			u.Today()
 		case "anytime":
-			u.Schedule(1, nil, nil)
+			u.Anytime()
 		case "someday":
-			u.Schedule(2, nil, nil)
+			u.Someday()
 		case "inbox":
-			u.Schedule(0, nil, nil)
+			u.Inbox()
 		}
 	}
 	if op.Deadline != "" {
@@ -1153,19 +1176,19 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 	if op.Project != "" {
 		u.Project(op.Project)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if op.Area != "" {
 		u.Area(op.Area)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if op.Heading != "" {
 		u.Heading(op.Heading)
 		if op.When == "" {
-			u.Schedule(1, 0, 0)
+			u.Anytime()
 		}
 	}
 	if len(op.Tags) > 0 {
