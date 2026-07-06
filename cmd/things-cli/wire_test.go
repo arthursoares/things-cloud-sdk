@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -452,5 +454,170 @@ func TestCmdEditWire(t *testing.T) {
 	// out of inbox with null dates (Bug 8 + PR #9 semantics).
 	if p["st"] != float64(1) || p["sr"] != nil || p["tir"] != nil {
 		t.Errorf("auto-anytime on edit: st=%v sr=%v tir=%v, want 1/null/null", p["st"], p["sr"], p["tir"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// initCLI / loadState / cmdBatch — full command plumbing against a fake server
+// ---------------------------------------------------------------------------
+
+// fakeCloud spins up a server implementing enough of the Things Cloud API
+// for initCLI + read/write flows: verify, own-history, history head, items.
+func fakeCloud(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/commit"):
+			fmt.Fprint(w, `{"server-head-index":5}`)
+		case strings.HasSuffix(r.URL.Path, "/items"):
+			fmt.Fprint(w, `{"items":[{"VJ1edXTP9q3PmFDUuy8EQh":{"e":"Task6","t":0,"p":{"tt":"seeded","tp":0,"st":1,"ss":0}}}],"current-item-index":1,"schema":301}`)
+		case strings.Contains(r.URL.Path, "/version/1/history/"):
+			fmt.Fprint(w, `{"latest-server-index":1,"latest-schema-version":301}`)
+		case strings.Contains(r.URL.Path, "/account/"):
+			fmt.Fprint(w, `{"email":"t@example.com","status":"SYAccountStatusActive","history-key":"hist-1"}`)
+		default:
+			fmt.Fprint(w, `{}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestInitCLIUsesEndpointOverride(t *testing.T) {
+	server := fakeCloud(t)
+	t.Setenv("THINGS_ENDPOINT", server.URL)
+	t.Setenv("THINGS_USERNAME", "t@example.com")
+	t.Setenv("THINGS_PASSWORD", "pw")
+
+	ctx := initCLI(true)
+	if ctx.history == nil || ctx.history.ID != "hist-1" {
+		t.Fatalf("initCLI history = %+v, want ID hist-1 from fake server", ctx.history)
+	}
+	if got := ctx.serverIndex(); got != 1 {
+		t.Errorf("serverIndex() = %d, want 1", got)
+	}
+}
+
+func TestLoadStateBuildsAndCachesState(t *testing.T) {
+	server := fakeCloud(t)
+	t.Setenv("THINGS_ENDPOINT", server.URL)
+	t.Setenv("THINGS_USERNAME", "t@example.com")
+	t.Setenv("THINGS_PASSWORD", "pw")
+	cachePath := t.TempDir() + "/cache.json"
+	t.Setenv("THINGS_CLI_CACHE", cachePath)
+
+	ctx := initCLI(false)
+	state := ctx.loadState()
+	if state.Tasks["VJ1edXTP9q3PmFDUuy8EQh"] == nil {
+		t.Fatal("loadState did not aggregate the seeded task")
+	}
+
+	cache, err := loadCLIStateCache(cachePath)
+	if err != nil || cache == nil {
+		t.Fatalf("cache not written: %v %v", cache, err)
+	}
+	if cache.ServerIndex != 1 || cache.HistoryID != "hist-1" {
+		t.Errorf("cache = index %d history %q, want 1/hist-1", cache.ServerIndex, cache.HistoryID)
+	}
+
+	// Second load must serve from the cache without rebuilding from zero.
+	state2 := ctx.loadState()
+	if state2.Tasks["VJ1edXTP9q3PmFDUuy8EQh"] == nil {
+		t.Fatal("cached loadState lost the task")
+	}
+}
+
+func TestCmdBatchWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id1, id2 := thingscloud.NewUUID(), thingscloud.NewUUID()
+
+	// cmdBatch reads ops from stdin.
+	ops := fmt.Sprintf(`[
+		{"cmd":"create","title":"batch A","uuid":%q},
+		{"cmd":"complete","uuid":%q}
+	]`, id1, id2)
+	r, w, _ := os.Pipe()
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+	go func() { w.WriteString(ops); w.Close() }()
+
+	cmdBatch(h)
+
+	if len(*commits) != 1 {
+		t.Fatalf("%d commits, want 1 — batch must send all ops in a single HTTP request", len(*commits))
+	}
+	body := (*commits)[0].body
+	if len(body) != 2 {
+		t.Fatalf("commit has %d items, want 2", len(body))
+	}
+	create, complete := body[id1], body[id2]
+	if create.E != "Task6" || create.T != 0 {
+		t.Errorf("create envelope = %s/%d, want Task6/0", create.E, create.T)
+	}
+	if complete.T != 1 {
+		t.Errorf("complete envelope action = %d, want 1", complete.T)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(complete.P, &p); err != nil || p["ss"] != float64(3) {
+		t.Errorf("complete payload ss = %v (err %v), want 3", p["ss"], err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Read commands — render a known state and assert the JSON output
+// ---------------------------------------------------------------------------
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	w.Close()
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func TestReadCommandsRenderState(t *testing.T) {
+	state := testStateForListFilters()
+
+	out := captureStdout(t, func() { cmdList(state, []string{"--today"}) })
+	if !strings.Contains(out, "today-1") {
+		t.Errorf("list --today output missing today-1:\n%s", out)
+	}
+
+	out = captureStdout(t, func() { cmdSearch(state, []string{"needle"}) })
+	if !strings.Contains(out, "upcoming-1") {
+		t.Errorf("search output missing upcoming-1:\n%s", out)
+	}
+
+	out = captureStdout(t, func() { cmdShow(state, "today-1") })
+	if !strings.Contains(out, `"uuid"`) || !strings.Contains(out, "today-1") {
+		t.Errorf("show output malformed:\n%s", out)
+	}
+
+	out = captureStdout(t, func() { cmdAreas(state) })
+	if !strings.Contains(out, "Work") {
+		t.Errorf("areas output missing Work:\n%s", out)
+	}
+
+	out = captureStdout(t, func() { cmdProjects(state) })
+	if !strings.Contains(out, "Project Alpha") {
+		t.Errorf("projects output missing Project Alpha:\n%s", out)
+	}
+
+	out = captureStdout(t, func() { cmdTags(state) })
+	var tags []map[string]any
+	if err := json.Unmarshal([]byte(out), &tags); err != nil {
+		t.Errorf("tags output is not a JSON array: %v\n%s", err, out)
 	}
 }
