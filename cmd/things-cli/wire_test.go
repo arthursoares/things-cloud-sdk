@@ -1,0 +1,456 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	thingscloud "github.com/arthursoares/things-cloud-sdk"
+)
+
+// ---------------------------------------------------------------------------
+// taskUpdate builder — every method builds part of a wire payload
+// ---------------------------------------------------------------------------
+
+func TestTaskUpdateBuilderFields(t *testing.T) {
+	midnight := todayMidnightUTC()
+
+	cases := []struct {
+		name  string
+		build func() map[string]any
+		want  map[string]any
+	}{
+		{"Title", func() map[string]any { return newTaskUpdate().Title("new title").build() },
+			map[string]any{"tt": "new title"}},
+		{"Status completed", func() map[string]any { return newTaskUpdate().Status(3).build() },
+			map[string]any{"ss": 3}},
+		{"StopDate", func() map[string]any { return newTaskUpdate().StopDate(1751791234.5).build() },
+			map[string]any{"sp": 1751791234.5}},
+		{"Trash", func() map[string]any { return newTaskUpdate().Trash(true).build() },
+			map[string]any{"tr": true}},
+		{"Today", func() map[string]any { return newTaskUpdate().Today().build() },
+			map[string]any{"st": 1, "sr": midnight, "tir": midnight}},
+		{"Anytime", func() map[string]any { return newTaskUpdate().Anytime().build() },
+			map[string]any{"st": 1, "sr": nil, "tir": nil}},
+		{"Someday", func() map[string]any { return newTaskUpdate().Someday().build() },
+			map[string]any{"st": 2, "sr": nil, "tir": nil}},
+		{"Inbox", func() map[string]any { return newTaskUpdate().Inbox().build() },
+			map[string]any{"st": 0, "sr": nil, "tir": nil}},
+		{"ScheduleDate", func() map[string]any { return newTaskUpdate().ScheduleDate(1760000000).build() },
+			map[string]any{"st": 1, "sr": int64(1760000000), "tir": int64(1760000000)}},
+		{"Deadline", func() map[string]any { return newTaskUpdate().Deadline(1770000000).build() },
+			map[string]any{"dd": int64(1770000000)}},
+		{"Scheduled", func() map[string]any { return newTaskUpdate().Scheduled(100, 200).build() },
+			map[string]any{"sr": int64(100), "tir": int64(200)}},
+		{"Tags", func() map[string]any { return newTaskUpdate().Tags([]string{"a1", "b2"}).build() },
+			map[string]any{"tg": []string{"a1", "b2"}}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.build()
+			// Every update payload must carry a modification date (md is
+			// null only on CREATES — updates require a timestamp).
+			md, ok := got["md"].(float64)
+			if !ok || md <= 0 {
+				t.Errorf("md = %v, want positive float timestamp on updates", got["md"])
+			}
+			for k, want := range tc.want {
+				gotV, exists := got[k]
+				if !exists {
+					t.Errorf("field %q missing from payload %v", k, got)
+					continue
+				}
+				if fmt.Sprintf("%v", gotV) != fmt.Sprintf("%v", want) {
+					t.Errorf("field %q = %v, want %v", k, gotV, want)
+				}
+			}
+			// No extra fields beyond md + the expected set.
+			if len(got) != len(tc.want)+1 {
+				t.Errorf("payload has %d fields, want %d: %v", len(got), len(tc.want)+1, got)
+			}
+		})
+	}
+}
+
+func TestTaskUpdateNoteAndClearNote(t *testing.T) {
+	note := newTaskUpdate().Note("hello").build()
+	wn, ok := note["nt"].(WireNote)
+	if !ok {
+		t.Fatalf("nt = %T, want WireNote", note["nt"])
+	}
+	if wn.Value != "hello" || wn.TypeTag != "tx" || wn.Type != 1 {
+		t.Errorf("Note wire form = %+v", wn)
+	}
+	if wn.Checksum != noteChecksum("hello") {
+		t.Errorf("Note checksum = %d, want %d", wn.Checksum, noteChecksum("hello"))
+	}
+
+	cleared := newTaskUpdate().ClearNote().build()
+	cn := cleared["nt"].(WireNote)
+	if cn.Value != "" || cn.Checksum != 0 {
+		t.Errorf("ClearNote wire form = %+v, want empty value and zero checksum", cn)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Notes and dates
+// ---------------------------------------------------------------------------
+
+func TestNoteChecksumIsCRC32IEEE(t *testing.T) {
+	// crc32.ChecksumIEEE("hello") is a fixed, well-known value.
+	if got := noteChecksum("hello"); got != 0x3610a686 {
+		t.Errorf("noteChecksum(hello) = %#x, want 0x3610a686 (CRC-32/IEEE)", got)
+	}
+	if got := noteChecksum(""); got != 0 {
+		t.Errorf("noteChecksum(\"\") = %d, want 0", got)
+	}
+}
+
+func TestWireNoteJSONFieldOrder(t *testing.T) {
+	// Things expects the note object keys in _t, ch, v, t order.
+	bs, err := json.Marshal(textNote("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(bs)
+	order := []string{`"_t"`, `"ch"`, `"v"`, `"t"`}
+	last := -1
+	for _, k := range order {
+		i := strings.Index(s, k)
+		if i < 0 || i < last {
+			t.Fatalf("note JSON %s does not have keys in order %v", s, order)
+		}
+		last = i
+	}
+}
+
+func TestTodayMidnightUTC(t *testing.T) {
+	got := todayMidnightUTC()
+	if got%86400 != 0 {
+		t.Errorf("todayMidnightUTC() = %d, not aligned to a UTC day boundary", got)
+	}
+	now := time.Now().UTC()
+	want := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+	// Allow the local-vs-UTC day to differ by one day at most (the function
+	// intentionally uses the local calendar date at UTC midnight).
+	if got != want && got != want-86400 && got != want+86400 {
+		t.Errorf("todayMidnightUTC() = %d, want within a day of %d", got, want)
+	}
+}
+
+func TestParseDate(t *testing.T) {
+	if ts := parseDate("2026-07-06"); ts == nil || ts.Format("2006-01-02") != "2026-07-06" {
+		t.Errorf("parseDate(2026-07-06) = %v", ts)
+	}
+	for _, bad := range []string{"07/06/2026", "yesterday", "", "2026-13-45"} {
+		if ts := parseDate(bad); ts != nil {
+			t.Errorf("parseDate(%q) = %v, want nil", bad, ts)
+		}
+	}
+}
+
+func TestParseArgs(t *testing.T) {
+	got := parseArgs([]string{"--title", "My Task", "--today", "--tags", "a,b", "--flag-at-end"})
+	want := map[string]string{"title": "My Task", "today": "true", "tags": "a,b", "flag-at-end": "true"}
+	if len(got) != len(want) {
+		t.Fatalf("parseArgs = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("parseArgs[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Golden shape: the 34-field create payload
+// ---------------------------------------------------------------------------
+
+func TestTaskCreatePayloadGoldenShape(t *testing.T) {
+	bs, err := json.Marshal(newTaskCreatePayload("shape check", map[string]string{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(bs, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	wantKeys := []string{
+		"tp", "sr", "dds", "rt", "rmd", "ss", "tr", "dl", "icp", "st",
+		"ar", "tt", "do", "lai", "tir", "tg", "agr", "ix", "cd", "lt",
+		"icc", "md", "ti", "dd", "ato", "nt", "icsd", "pr", "rp", "acrd",
+		"sp", "sb", "rr", "xx",
+	}
+	var gotKeys []string
+	for k := range m {
+		gotKeys = append(gotKeys, k)
+	}
+	sort.Strings(gotKeys)
+	sorted := append([]string(nil), wantKeys...)
+	sort.Strings(sorted)
+	if strings.Join(gotKeys, ",") != strings.Join(sorted, ",") {
+		t.Fatalf("create payload keys =\n  %v\nwant exactly the 34 HAR-derived fields:\n  %v", gotKeys, sorted)
+	}
+
+	// Fields that MUST be null on a bare create — 0 here means the Unix
+	// epoch and md-on-create corrupts sync.
+	for _, k := range []string{"sr", "tir", "dd", "md", "sp", "rr", "rp", "lai", "ato", "icsd", "acrd", "dds", "rmd"} {
+		if string(m[k]) != "null" {
+			t.Errorf("create payload %q = %s, want null", k, m[k])
+		}
+	}
+	// Empty arrays, not null.
+	for _, k := range []string{"rt", "dl", "ar", "tg", "agr", "pr"} {
+		if string(m[k]) != "[]" {
+			t.Errorf("create payload %q = %s, want []", k, m[k])
+		}
+	}
+	if string(m["st"]) != "0" || string(m["ss"]) != "0" || string(m["tp"]) != "0" {
+		t.Errorf("bare create defaults: st=%s ss=%s tp=%s, want all 0", m["st"], m["ss"], m["tp"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Handler wire tests — drive the real cmd* handlers against a fake server
+// and assert the exact bytes that would reach Things Cloud.
+// ---------------------------------------------------------------------------
+
+type capturedCommit struct {
+	ancestorIndex string
+	body          map[string]struct {
+		T int             `json:"t"`
+		E string          `json:"e"`
+		P json.RawMessage `json:"p"`
+	}
+}
+
+// newWireRecorder returns a History wired to a fake server plus a slice
+// collecting every commit POSTed through it.
+func newWireRecorder(t *testing.T) (*thingscloud.History, *[]capturedCommit) {
+	t.Helper()
+	var commits []capturedCommit
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/commit") {
+			var cc capturedCommit
+			cc.ancestorIndex = r.URL.Query().Get("ancestor-index")
+			if err := json.NewDecoder(r.Body).Decode(&cc.body); err != nil {
+				t.Errorf("commit body did not parse: %v", err)
+			}
+			commits = append(commits, cc)
+			fmt.Fprint(w, `{"server-head-index":42}`)
+			return
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+
+	c := thingscloud.New(server.URL, "test@example.com", "pw")
+	h := &thingscloud.History{Client: c, ID: "wire-test-history", LatestServerIndex: 7}
+	return h, &commits
+}
+
+func singleItem(t *testing.T, cc capturedCommit) (uuid string, action int, kind string, payload map[string]any) {
+	t.Helper()
+	if len(cc.body) != 1 {
+		t.Fatalf("commit has %d items, want 1: %v", len(cc.body), cc.body)
+	}
+	for id, item := range cc.body {
+		var p map[string]any
+		if err := json.Unmarshal(item.P, &p); err != nil {
+			t.Fatalf("payload not an object: %v", err)
+		}
+		return id, item.T, item.E, p
+	}
+	panic("unreachable")
+}
+
+func TestCmdCreateWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+
+	cmdCreate(h, []string{"Wire task", "--uuid", id, "--when", "today", "--note", "body"})
+
+	if len(*commits) != 1 {
+		t.Fatalf("%d commits, want 1", len(*commits))
+	}
+	cc := (*commits)[0]
+	if cc.ancestorIndex != "7" {
+		t.Errorf("ancestor-index = %q, want 7 (the synced head)", cc.ancestorIndex)
+	}
+	gotID, action, kind, p := singleItem(t, cc)
+	if gotID != id || action != 0 || kind != "Task6" {
+		t.Errorf("envelope = (%s, %d, %s), want (%s, 0, Task6)", gotID, action, kind, id)
+	}
+	if p["md"] != nil {
+		t.Errorf("create sent md = %v, must be null on creates", p["md"])
+	}
+	if p["st"] != float64(1) || p["sr"] == nil || p["tir"] == nil {
+		t.Errorf("--when today: st=%v sr=%v tir=%v", p["st"], p["sr"], p["tir"])
+	}
+	nt := p["nt"].(map[string]any)
+	if nt["v"] != "body" {
+		t.Errorf("note value = %v", nt["v"])
+	}
+}
+
+func TestCmdCompleteWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+
+	cmdComplete(h, id)
+
+	_, action, kind, p := singleItem(t, (*commits)[0])
+	if action != 1 || kind != "Task6" {
+		t.Errorf("envelope action/kind = %d/%s, want 1/Task6", action, kind)
+	}
+	if p["ss"] != float64(3) {
+		t.Errorf("ss = %v, want 3 (completed)", p["ss"])
+	}
+	if sp, ok := p["sp"].(float64); !ok || sp <= 0 {
+		t.Errorf("sp = %v, want completion timestamp", p["sp"])
+	}
+	if md, ok := p["md"].(float64); !ok || md <= 0 {
+		t.Errorf("md = %v, want modification timestamp on update", p["md"])
+	}
+}
+
+func TestCmdTrashWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+
+	cmdTrash(h, id)
+
+	_, action, kind, p := singleItem(t, (*commits)[0])
+	if action != 1 || kind != "Task6" || p["tr"] != true {
+		t.Errorf("trash wire = action %d kind %s tr %v", action, kind, p["tr"])
+	}
+}
+
+func TestCmdPurgeWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	target := thingscloud.NewUUID()
+
+	cmdPurge(h, target)
+
+	tombID, action, kind, p := singleItem(t, (*commits)[0])
+	if action != 0 || kind != "Tombstone2" {
+		t.Errorf("purge envelope = action %d kind %s, want 0/Tombstone2", action, kind)
+	}
+	if err := thingscloud.ValidateUUID(tombID); err != nil {
+		t.Errorf("tombstone UUID %q not canonical: %v", tombID, err)
+	}
+	if p["dloid"] != target {
+		t.Errorf("dloid = %v, want %s", p["dloid"], target)
+	}
+	if dld, ok := p["dld"].(float64); !ok || dld <= 0 {
+		t.Errorf("dld = %v, want deletion timestamp", p["dld"])
+	}
+}
+
+func TestCmdMoveToTodayWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+
+	cmdMoveToToday(h, thingscloud.NewUUID())
+
+	_, _, _, p := singleItem(t, (*commits)[0])
+	if p["st"] != float64(1) {
+		t.Errorf("st = %v, want 1", p["st"])
+	}
+	if p["sr"] == nil || p["tir"] == nil || p["sr"] != p["tir"] {
+		t.Errorf("sr/tir = %v/%v, want equal midnight timestamps", p["sr"], p["tir"])
+	}
+}
+
+func TestCmdCreateAreaWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+
+	cmdCreateArea(h, []string{"Wire Area", "--uuid", id})
+
+	gotID, action, kind, p := singleItem(t, (*commits)[0])
+	// Area2 is silently ignored by Things.app — Area3 is load-bearing.
+	if gotID != id || action != 0 || kind != "Area3" {
+		t.Errorf("area envelope = (%s, %d, %s), want (%s, 0, Area3)", gotID, action, kind, id)
+	}
+	if p["tt"] != "Wire Area" {
+		t.Errorf("tt = %v", p["tt"])
+	}
+}
+
+func TestCmdCreateTagWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+
+	cmdCreateTag(h, []string{"Wire Tag", "--uuid", id})
+
+	gotID, action, kind, p := singleItem(t, (*commits)[0])
+	if gotID != id || action != 0 || kind != "Tag4" {
+		t.Errorf("tag envelope = (%s, %d, %s), want (%s, 0, Tag4)", gotID, action, kind, id)
+	}
+	if p["sh"] != nil {
+		t.Errorf("sh = %v, want null when no shorthand given", p["sh"])
+	}
+}
+
+func TestCmdAddChecklistWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	task := thingscloud.NewUUID()
+
+	cmdAddChecklist(h, task, []string{"one,two"})
+
+	if len(*commits) != 2 {
+		t.Fatalf("%d commits, want 2 (one per checklist item)", len(*commits))
+	}
+	for i, cc := range *commits {
+		itemID, action, kind, p := singleItem(t, cc)
+		if action != 0 || kind != "ChecklistItem3" {
+			t.Errorf("item %d envelope = %d/%s, want 0/ChecklistItem3", i, action, kind)
+		}
+		if err := thingscloud.ValidateUUID(itemID); err != nil {
+			t.Errorf("checklist item UUID %q not canonical: %v", itemID, err)
+		}
+		ts := p["ts"].([]any)
+		if len(ts) != 1 || ts[0] != task {
+			t.Errorf("item %d ts = %v, want [%s]", i, p["ts"], task)
+		}
+		if p["md"] != nil {
+			t.Errorf("item %d md = %v, must be null on creates", i, p["md"])
+		}
+		if p["ix"] != float64(i) {
+			t.Errorf("item %d ix = %v, want %d", i, p["ix"], i)
+		}
+	}
+}
+
+func TestCmdEditWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+	proj := thingscloud.NewUUID()
+
+	cmdEdit(h, id, []string{"--title", "renamed", "--project", proj})
+
+	gotID, action, kind, p := singleItem(t, (*commits)[0])
+	if gotID != id || action != 1 || kind != "Task6" {
+		t.Errorf("edit envelope = (%s, %d, %s)", gotID, action, kind)
+	}
+	if p["tt"] != "renamed" {
+		t.Errorf("tt = %v", p["tt"])
+	}
+	pr := p["pr"].([]any)
+	if len(pr) != 1 || pr[0] != proj {
+		t.Errorf("pr = %v, want [%s]", p["pr"], proj)
+	}
+	// Assigning a project without an explicit schedule must move the task
+	// out of inbox with null dates (Bug 8 + PR #9 semantics).
+	if p["st"] != float64(1) || p["sr"] != nil || p["tir"] != nil {
+		t.Errorf("auto-anytime on edit: st=%v sr=%v tir=%v, want 1/null/null", p["st"], p["sr"], p["tir"])
+	}
+}

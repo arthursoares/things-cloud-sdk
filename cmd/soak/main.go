@@ -39,6 +39,7 @@ type stats struct {
 	edits        int
 	moves        int
 	completes    int
+	checklists   int
 	trashed      int
 	purged       int
 	rejections   int
@@ -81,6 +82,7 @@ func main() {
 	fmt.Printf("edits:          %d\n", st.edits)
 	fmt.Printf("moves:          %d\n", st.moves)
 	fmt.Printf("completes:      %d\n", st.completes)
+	fmt.Printf("checklists:     %d\n", st.checklists)
 	fmt.Printf("trashed/purged: %d / %d\n", st.trashed, st.purged)
 	fmt.Printf("Write rejections (unexpected): %d\n", st.rejections)
 	fmt.Printf("verification checks: %d, failures: %d\n", st.verifyChecks, st.verifyFails)
@@ -152,10 +154,62 @@ func runCycles(cli string, cycles int, st *stats) []createdItem {
 			case 1:
 				runCLI(cli, st, "move-to-today", taskID)
 				st.moves++
+			case 2:
+				runCLI(cli, st, "add-checklist", taskID, fmt.Sprintf("check %d.a,check %d.b", i, i))
+				st.checklists += 2
 			}
+		}
+
+		// Area + tag, exercised every cycle so their kinds (Area3, Tag4)
+		// get live-server acceptance too.
+		areaID := things.NewUUID()
+		runCLI(cli, st, "create-area", fmt.Sprintf("Soak area %d", i), "--uuid", areaID)
+		st.creates++
+		created = append(created, createdItem{areaID, fmt.Sprintf("Soak area %d", i), "area"})
+
+		tagID := things.NewUUID()
+		runCLI(cli, st, "create-tag", fmt.Sprintf("soak-tag-%d", i), "--uuid", tagID)
+		st.creates++
+		created = append(created, createdItem{tagID, fmt.Sprintf("soak-tag-%d", i), "tag"})
+
+		// Batch: two creates (one with a forced leading-zero UUID, one
+		// carrying refs) plus a move of an EARLIER task — three distinct
+		// UUIDs in one HTTP commit. Two ops on the same UUID in one
+		// commit are impossible on this wire format (the body is a JSON
+		// object keyed by UUID) and Write() rejects them by design.
+		b1, b2 := forcedLeadingZeroUUID(false), things.NewUUID()
+		st.forcedLeadZ++
+		moveTarget := created[len(created)-3].uuid // a task from this cycle
+		batch := []map[string]any{
+			{"cmd": "create", "title": fmt.Sprintf("Soak batch task %d.1", i), "uuid": b1, "area": areaID},
+			{"cmd": "create", "title": fmt.Sprintf("Soak batch task %d.2", i), "uuid": b2, "project": projID, "tags": []string{tagID}},
+			{"cmd": "move-to-project", "uuid": moveTarget, "project": projID},
+		}
+		if runBatch(cli, st, batch) {
+			st.creates += 2
+			st.moves++
+			created = append(created,
+				createdItem{b1, fmt.Sprintf("Soak batch task %d.1", i), "task"},
+				createdItem{b2, fmt.Sprintf("Soak batch task %d.2", i), "task"})
 		}
 	}
 	return created
+}
+
+func runBatch(cli string, st *stats, ops []map[string]any) bool {
+	payload, err := json.Marshal(ops)
+	if err != nil {
+		fatal("marshal batch: " + err.Error())
+	}
+	cmd := exec.Command(cli, "batch")
+	cmd.Stdin = bytes.NewReader(payload)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		st.rejections++
+		fmt.Printf("  BATCH REJECTED: %v\n    %s\n", err, bytes.TrimSpace(out))
+		return false
+	}
+	return true
 }
 
 func verify(created []createdItem, st *stats) {
@@ -188,10 +242,21 @@ func verify(created []createdItem, st *stats) {
 			present[it.UUID] = true
 		}
 	}
+	areas, err := state.AllAreas()
+	if err != nil {
+		fatal("query areas: " + err.Error())
+	}
+	for _, a := range areas {
+		present[a.UUID] = true
+	}
+	tags, err := state.AllTags()
+	if err != nil {
+		fatal("query tags: " + err.Error())
+	}
+	for _, tg := range tags {
+		present[tg.UUID] = true
+	}
 	for _, c := range created {
-		if c.kind == "area" || c.kind == "tag" {
-			continue
-		}
 		st.verifyChecks++
 		if !present[c.uuid] {
 			st.verifyFails++
@@ -206,11 +271,12 @@ func cleanup(cli string, created []createdItem, st *stats) {
 	// Trash then purge in reverse creation order so children go before parents.
 	for i := len(created) - 1; i >= 0; i-- {
 		c := created[i]
-		if c.kind == "area" || c.kind == "tag" {
-			continue // areas/tags are not created by this soak yet
-		}
-		if runCLIQuiet(cli, "trash", c.uuid) {
-			st.trashed++
+		// Areas and tags are not tasks — trash doesn't apply, but a
+		// tombstone (purge) removes any object kind.
+		if c.kind != "area" && c.kind != "tag" {
+			if runCLIQuiet(cli, "trash", c.uuid) {
+				st.trashed++
+			}
 		}
 		if runCLIQuiet(cli, "purge", c.uuid) {
 			st.purged++

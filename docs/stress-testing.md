@@ -51,10 +51,12 @@ Nothing local can prove Things.app *accepts* our bytes. This step does.
 
 ### a. Run the soak driver
 
-It builds `things-cli`, drives many create/edit/move/complete/trash
-cycles through it (the real user write path), **deliberately including
-identifiers built from leading-zero-byte UUIDs**, verifies every write
-landed by reading the account back through the sync engine, then cleans up.
+It builds `things-cli` and drives every write command through it (the
+real user write path): create (tasks, projects, headings, areas, tags),
+edit, move-to-today, complete, add-checklist, batch (multi-op single
+commit), trash, and purge — **deliberately including identifiers built
+from leading-zero-byte UUIDs**. It verifies every write landed by reading
+the account back through the sync engine, then cleans up.
 
 ```bash
 export THINGS_USERNAME='test-account@example.com'
