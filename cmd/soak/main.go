@@ -125,7 +125,7 @@ func runCycles(cli string, cycles int, st *stats) []createdItem {
 		headID := things.NewUUID()
 		runCLI(cli, st, "create", fmt.Sprintf("Soak heading %d", i), "--type", "heading", "--project", projID, "--when", "inbox", "--uuid", headID)
 		st.creates++
-		created = append(created, createdItem{headID, fmt.Sprintf("Soak heading %d", i), "task"})
+		created = append(created, createdItem{headID, fmt.Sprintf("Soak heading %d", i), "heading"})
 
 		// A batch of tasks under the heading. Every 4th task is forced to
 		// use a leading-zero-byte UUID.
@@ -172,17 +172,24 @@ func verify(created []createdItem, st *stats) {
 	if _, err := syncer.Sync(); err != nil {
 		fatal("verify sync failed: " + err.Error())
 	}
+	// Tasks, projects, and headings all live in the tasks table but are
+	// returned by different queries (type 0/1/2), so gather all three.
 	state := syncer.State()
-	all, err := state.AllTasks(sync.QueryOpts{IncludeCompleted: true, IncludeTrashed: true})
-	if err != nil {
-		fatal("query tasks: " + err.Error())
-	}
+	opts := sync.QueryOpts{IncludeCompleted: true, IncludeTrashed: true}
 	present := map[string]bool{}
-	for _, task := range all {
-		present[task.UUID] = true
+	for _, q := range []func(sync.QueryOpts) ([]*things.Task, error){
+		state.AllTasks, state.AllProjects, state.AllHeadings,
+	} {
+		items, err := q(opts)
+		if err != nil {
+			fatal("query state: " + err.Error())
+		}
+		for _, it := range items {
+			present[it.UUID] = true
+		}
 	}
 	for _, c := range created {
-		if c.kind != "task" && c.kind != "project" {
+		if c.kind == "area" || c.kind == "tag" {
 			continue
 		}
 		st.verifyChecks++
