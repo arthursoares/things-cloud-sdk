@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -677,9 +678,16 @@ func taskToOutput(t *thingscloud.Task) TaskOutput {
 	return out
 }
 
-func cmdList(state *memory.State, args []string) {
-	opts := parseArgs(args)
-	todayStart := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.UTC)
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func listTasks(state *memory.State, opts map[string]string) []TaskOutput {
+	now := time.Now().UTC()
+	tomorrowStart := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	searchQuery := strings.ToLower(strings.TrimSpace(opts["search"]))
 
 	var tasks []TaskOutput
 	for _, task := range state.Tasks {
@@ -689,12 +697,34 @@ func cmdList(state *memory.State, args []string) {
 
 		// Filters
 		if _, ok := opts["today"]; ok {
-			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !task.ScheduledDate.Equal(todayStart) {
+			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !sameDay(*task.ScheduledDate, now) {
 				continue
 			}
 		}
 		if _, ok := opts["inbox"]; ok {
 			if task.Schedule != thingscloud.TaskScheduleInbox {
+				continue
+			}
+		}
+		if _, ok := opts["anytime"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate != nil {
+				continue
+			}
+		}
+		if _, ok := opts["someday"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleSomeday || task.ScheduledDate != nil {
+				continue
+			}
+		}
+		if _, ok := opts["upcoming"]; ok {
+			if task.Schedule != thingscloud.TaskScheduleSomeday || task.ScheduledDate == nil || task.ScheduledDate.Before(tomorrowStart) {
+				continue
+			}
+		}
+		if searchQuery != "" {
+			title := strings.ToLower(task.Title)
+			note := strings.ToLower(task.Note)
+			if !strings.Contains(title, searchQuery) && !strings.Contains(note, searchQuery) {
 				continue
 			}
 		}
@@ -706,14 +736,38 @@ func cmdList(state *memory.State, args []string) {
 		}
 		if projectName, ok := opts["project"]; ok {
 			projectUUID := findProjectUUID(state, projectName)
-			if !containsStr(task.ActionGroupIDs, projectUUID) {
+			if !containsStr(task.ParentTaskIDs, projectUUID) {
 				continue
 			}
 		}
 
 		tasks = append(tasks, taskToOutput(task))
 	}
-	outputJSON(tasks)
+
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].ScheduledDate != nil && tasks[j].ScheduledDate != nil && *tasks[i].ScheduledDate != *tasks[j].ScheduledDate {
+			return *tasks[i].ScheduledDate < *tasks[j].ScheduledDate
+		}
+		if tasks[i].Title != tasks[j].Title {
+			return tasks[i].Title < tasks[j].Title
+		}
+		return tasks[i].UUID < tasks[j].UUID
+	})
+
+	return tasks
+}
+
+func cmdList(state *memory.State, args []string) {
+	outputJSON(listTasks(state, parseArgs(args)))
+}
+
+func cmdListWithOpts(state *memory.State, opts map[string]string) {
+	outputJSON(listTasks(state, opts))
+}
+
+func cmdSearch(state *memory.State, args []string) {
+	requireArgs(args, 1, "things-cli search <query>")
+	cmdListWithOpts(state, map[string]string{"search": strings.Join(args, " ")})
 }
 
 func cmdShow(state *memory.State, uuid string) {
@@ -1319,7 +1373,13 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: things-cli <command> [args]
 
 Read commands (use an incremental local state cache):
-  list [--today] [--inbox] [--area NAME] [--project NAME]
+  list [--today] [--inbox] [--anytime] [--someday] [--upcoming] [--search QUERY] [--area NAME] [--project NAME]
+  today
+  inbox
+  anytime
+  someday
+  upcoming
+  search <query>
   show <uuid>
   areas
   projects
@@ -1375,6 +1435,18 @@ func main() {
 	// Read commands — need state
 	case "list":
 		cmdList(ctx.loadState(), os.Args[2:])
+	case "today":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"today": "true"})
+	case "inbox":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"inbox": "true"})
+	case "anytime":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"anytime": "true"})
+	case "someday":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"someday": "true"})
+	case "upcoming":
+		cmdListWithOpts(ctx.loadState(), map[string]string{"upcoming": "true"})
+	case "search":
+		cmdSearch(ctx.loadState(), os.Args[2:])
 	case "show":
 		requireArgs(os.Args[2:], 1, "things-cli show <uuid>")
 		cmdShow(ctx.loadState(), os.Args[2])
