@@ -33,6 +33,9 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 
 	for i, item := range items {
 		serverIndex := baseIndex + i
+		if item.HasServerIndex {
+			serverIndex = item.ServerIndex
+		}
 		ts := time.Now()
 
 		changes, err := s.processItem(item, serverIndex, ts)

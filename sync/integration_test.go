@@ -144,7 +144,95 @@ func TestIntegration(t *testing.T) {
 		if len(allChanges) != 3 {
 			t.Errorf("expected 3 total changes, got %d", len(allChanges))
 		}
+		if allChanges[0].ChangeType() != "TaskCreated" {
+			t.Errorf("expected first logged change type TaskCreated, got %s", allChanges[0].ChangeType())
+		}
+		if _, ok := allChanges[0].(LoggedChange); !ok {
+			t.Errorf("expected persisted change to be LoggedChange, got %T", allChanges[0])
+		}
 	})
+}
+
+func TestProcessItemsUsesItemServerIndex(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	syncer, err := Open(dbPath, nil)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer syncer.Close()
+
+	payload := things.TaskActionItemPayload{}
+	title := "Indexed task"
+	payload.Title = &title
+	tp := things.TaskTypeTask
+	payload.Type = &tp
+	payloadBytes, _ := json.Marshal(payload)
+
+	items := []things.Item{
+		{
+			UUID:           "task-a",
+			Kind:           things.ItemKindTask,
+			Action:         things.ItemActionCreated,
+			P:              payloadBytes,
+			ServerIndex:    7,
+			HasServerIndex: true,
+		},
+		{
+			UUID:           "task-b",
+			Kind:           things.ItemKindTask,
+			Action:         things.ItemActionCreated,
+			P:              payloadBytes,
+			ServerIndex:    7,
+			HasServerIndex: true,
+		},
+		{
+			UUID:           "task-c",
+			Kind:           things.ItemKindTask,
+			Action:         things.ItemActionCreated,
+			P:              payloadBytes,
+			ServerIndex:    8,
+			HasServerIndex: true,
+		},
+	}
+
+	changes, err := syncer.processItems(items, 100)
+	if err != nil {
+		t.Fatalf("processItems failed: %v", err)
+	}
+	if len(changes) != 3 {
+		t.Fatalf("expected 3 changes, got %d", len(changes))
+	}
+
+	rows, err := syncer.db.Query(`SELECT entity_uuid, server_index FROM change_log`)
+	if err != nil {
+		t.Fatalf("querying change_log failed: %v", err)
+	}
+	defer rows.Close()
+
+	indexByUUID := make(map[string]int)
+	for rows.Next() {
+		var uuid string
+		var serverIndex int
+		if err := rows.Scan(&uuid, &serverIndex); err != nil {
+			t.Fatalf("scanning change_log failed: %v", err)
+		}
+		indexByUUID[uuid] = serverIndex
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading change_log failed: %v", err)
+	}
+
+	if indexByUUID["task-a"] != 7 {
+		t.Errorf("task-a server_index = %d, want 7", indexByUUID["task-a"])
+	}
+	if indexByUUID["task-b"] != 7 {
+		t.Errorf("task-b server_index = %d, want 7", indexByUUID["task-b"])
+	}
+	if indexByUUID["task-c"] != 8 {
+		t.Errorf("task-c server_index = %d, want 8", indexByUUID["task-c"])
+	}
 }
 
 func TestStateQueries(t *testing.T) {
