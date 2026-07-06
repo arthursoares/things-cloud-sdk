@@ -11,6 +11,13 @@ import (
 	memory "github.com/arthursoares/things-cloud-sdk/state/memory"
 )
 
+var (
+	testTaskID    = thingscloud.NewUUID()
+	testProjectID = thingscloud.NewUUID()
+	testAreaID    = thingscloud.NewUUID()
+	testHeadingID = thingscloud.NewUUID()
+)
+
 func requirePayloadMap(t *testing.T, env any) map[string]any {
 	t.Helper()
 	envelope, ok := env.(writeEnvelope)
@@ -38,7 +45,7 @@ func assertAnytimeSchedule(t *testing.T, payload map[string]any) {
 }
 
 func TestTaskUpdateAnytimeClearsScheduleDates(t *testing.T) {
-	payload := newTaskUpdate().Project("project-1").Anytime().build()
+	payload := newTaskUpdate().Project(testProjectID).Anytime().build()
 
 	assertAnytimeSchedule(t, payload)
 	if got := payload["pr"]; got == nil {
@@ -106,8 +113,8 @@ func TestCommandNeedsHistoryHead(t *testing.T) {
 
 func TestBatchMoveToProjectUsesNullScheduleDates(t *testing.T) {
 	env, _, err := buildBatchMoveToProject(BatchOp{
-		UUID:    "task-1",
-		Project: "project-1",
+		UUID:    testTaskID,
+		Project: testProjectID,
 	})
 	if err != nil {
 		t.Fatalf("buildBatchMoveToProject failed: %v", err)
@@ -136,8 +143,8 @@ func TestBatchMoveToProjectUsesNullScheduleDates(t *testing.T) {
 
 func TestBatchMoveToAreaUsesNullScheduleDates(t *testing.T) {
 	env, _, err := buildBatchMoveToArea(BatchOp{
-		UUID: "task-1",
-		Area: "area-1",
+		UUID: testTaskID,
+		Area: testAreaID,
 	})
 	if err != nil {
 		t.Fatalf("buildBatchMoveToArea failed: %v", err)
@@ -153,15 +160,15 @@ func TestBatchEditAutoAnytimeUsesNullScheduleDates(t *testing.T) {
 	}{
 		{
 			name: "project",
-			op:   BatchOp{UUID: "task-1", Project: "project-1"},
+			op:   BatchOp{UUID: testTaskID, Project: testProjectID},
 		},
 		{
 			name: "area",
-			op:   BatchOp{UUID: "task-1", Area: "area-1"},
+			op:   BatchOp{UUID: testTaskID, Area: testAreaID},
 		},
 		{
 			name: "heading",
-			op:   BatchOp{UUID: "task-1", Heading: "heading-1"},
+			op:   BatchOp{UUID: testTaskID, Heading: testHeadingID},
 		},
 	}
 
@@ -178,8 +185,8 @@ func TestBatchEditAutoAnytimeUsesNullScheduleDates(t *testing.T) {
 
 func TestBatchEditExplicitWhenWinsOverAutoAnytime(t *testing.T) {
 	env, _, err := buildBatchEdit(BatchOp{
-		UUID:    "task-1",
-		Project: "project-1",
+		UUID:    testTaskID,
+		Project: testProjectID,
 		When:    "someday",
 	})
 	if err != nil {
@@ -220,12 +227,12 @@ func TestCLIStateCacheMissingFile(t *testing.T) {
 func TestCLIStateCacheRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "state.json")
 	state := memory.NewState()
-	state.Tasks["task-1"] = &thingscloud.Task{
-		UUID:  "task-1",
+	state.Tasks[testTaskID] = &thingscloud.Task{
+		UUID:  testTaskID,
 		Title: "Cached Task",
 	}
-	state.Areas["area-1"] = &thingscloud.Area{
-		UUID:  "area-1",
+	state.Areas[testAreaID] = &thingscloud.Area{
+		UUID:  testAreaID,
 		Title: "Cached Area",
 	}
 
@@ -256,11 +263,11 @@ func TestCLIStateCacheRoundTrip(t *testing.T) {
 	if loaded.ServerIndex != 42 {
 		t.Fatalf("ServerIndex = %d, want 42", loaded.ServerIndex)
 	}
-	if loaded.State.Tasks["task-1"].Title != "Cached Task" {
-		t.Fatalf("task title = %q, want Cached Task", loaded.State.Tasks["task-1"].Title)
+	if loaded.State.Tasks[testTaskID].Title != "Cached Task" {
+		t.Fatalf("task title = %q, want Cached Task", loaded.State.Tasks[testTaskID].Title)
 	}
-	if loaded.State.Areas["area-1"].Title != "Cached Area" {
-		t.Fatalf("area title = %q, want Cached Area", loaded.State.Areas["area-1"].Title)
+	if loaded.State.Areas[testAreaID].Title != "Cached Area" {
+		t.Fatalf("area title = %q, want Cached Area", loaded.State.Areas[testAreaID].Title)
 	}
 }
 
@@ -298,9 +305,9 @@ func testStateForListFilters() *memory.State {
 	today := time.Now().UTC()
 	tomorrow := today.Add(24 * time.Hour)
 
-	state.Areas["area-1"] = &thingscloud.Area{UUID: "area-1", Title: "Work"}
-	state.Tasks["project-1"] = &thingscloud.Task{
-		UUID:  "project-1",
+	state.Areas[testAreaID] = &thingscloud.Area{UUID: testAreaID, Title: "Work"}
+	state.Tasks[testProjectID] = &thingscloud.Task{
+		UUID:  testProjectID,
 		Title: "Project Alpha",
 		Type:  thingscloud.TaskTypeProject,
 	}
@@ -336,13 +343,13 @@ func testStateForListFilters() *memory.State {
 		UUID:          "project-task-1",
 		Title:         "Project Task",
 		Schedule:      thingscloud.TaskScheduleAnytime,
-		ParentTaskIDs: []string{"project-1"},
+		ParentTaskIDs: []string{testProjectID},
 	}
 	state.Tasks["area-task-1"] = &thingscloud.Task{
 		UUID:     "area-task-1",
 		Title:    "Area Task",
 		Schedule: thingscloud.TaskScheduleAnytime,
-		AreaIDs:  []string{"area-1"},
+		AreaIDs:  []string{testAreaID},
 	}
 	state.Tasks["completed-1"] = &thingscloud.Task{
 		UUID:     "completed-1",
@@ -407,4 +414,61 @@ func TestListTasksSearchAndContainerFilters(t *testing.T) {
 	requireUUIDs(t, listTasks(state, map[string]string{"search": "project"}), "project-task-1")
 	requireUUIDs(t, listTasks(state, map[string]string{"area": "Work"}), "area-task-1")
 	requireUUIDs(t, listTasks(state, map[string]string{"project": "Project Alpha"}), "project-task-1")
+}
+
+func TestGenerateUUIDAlwaysCanonical(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		s := generateUUID()
+		if err := thingscloud.ValidateUUID(s); err != nil {
+			t.Fatalf("generateUUID() = %q is not canonical Base58: %v", s, err)
+		}
+	}
+}
+
+func TestValidateIdentifierOpts(t *testing.T) {
+	good := thingscloud.NewUUID()
+
+	if err := validateIdentifierOpts(map[string]string{
+		"uuid": good, "project": good, "area": good, "heading": good, "tags": good + "," + good,
+	}); err != nil {
+		t.Errorf("all-valid opts: %v, want nil", err)
+	}
+	if err := validateIdentifierOpts(map[string]string{"when": "today", "note": "free text"}); err != nil {
+		t.Errorf("no identifier opts: %v, want nil", err)
+	}
+
+	bad := map[string]map[string]string{
+		"hyphenated uuid": {"uuid": "6f9b2c1e-8a4d-4e5f-9c3b-2a1d0e9f8b7c"},
+		"bad project":     {"project": "not-base58-0OIl"},
+		"bad area":        {"area": "abc def"},
+		"bad heading":     {"heading": "VJ0edXTP9q3PmFDUuy8EQh"},
+		"one bad tag":     {"tags": good + ",bad-tag-uuid"},
+	}
+	for name, opts := range bad {
+		if err := validateIdentifierOpts(opts); err == nil {
+			t.Errorf("%s: got nil error, want validation error", name)
+		}
+	}
+}
+
+func TestBuildBatchCreateRejectsInvalidRef(t *testing.T) {
+	_, _, err := buildBatchCreate(BatchOp{Title: "x", Project: "6f9b2c1e-8a4d-4e5f-9c3b-2a1d0e9f8b7c"})
+	if err == nil {
+		t.Error("buildBatchCreate with hyphenated project UUID: got nil error, want validation error")
+	}
+	_, _, err = buildBatchCreate(BatchOp{Title: "x", UUID: "not!base58"})
+	if err == nil {
+		t.Error("buildBatchCreate with invalid explicit UUID: got nil error, want validation error")
+	}
+}
+
+func TestBuildBatchEditRejectsInvalidRef(t *testing.T) {
+	_, _, err := buildBatchEdit(BatchOp{UUID: thingscloud.NewUUID(), Heading: "6f9b2c1e-8a4d-4e5f-9c3b-2a1d0e9f8b7c"})
+	if err == nil {
+		t.Error("buildBatchEdit with hyphenated heading UUID: got nil error, want validation error")
+	}
+	_, _, err = buildBatchEdit(BatchOp{UUID: "bad uuid", Title: "y"})
+	if err == nil {
+		t.Error("buildBatchEdit with invalid target UUID: got nil error, want validation error")
+	}
 }

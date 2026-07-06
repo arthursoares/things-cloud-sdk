@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +12,6 @@ import (
 
 	thingscloud "github.com/arthursoares/things-cloud-sdk"
 	memory "github.com/arthursoares/things-cloud-sdk/state/memory"
-	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -135,22 +133,50 @@ func defaultExtension() WireExtension {
 }
 
 func generateUUID() string {
-	u := uuid.New()
-	// Base58 alphabet (Bitcoin/Flickr): no 0, O, I, l
-	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-	n := new(big.Int).SetBytes(u[:])
-	base := big.NewInt(58)
-	mod := new(big.Int)
-	var encoded []byte
-	for n.Sign() > 0 {
-		n.DivMod(n, base, mod)
-		encoded = append(encoded, alphabet[mod.Int64()])
+	return thingscloud.NewUUID()
+}
+
+// validateIdentifierOpts checks every option that carries a Things
+// identifier. Invalid identifiers written to the cloud poison the sync
+// history irreparably, so they must be rejected before any write.
+func validateIdentifierOpts(opts map[string]string) error {
+	for _, key := range []string{"uuid", "project", "heading", "area"} {
+		if v, ok := opts[key]; ok && v != "" {
+			if err := thingscloud.ValidateUUID(v); err != nil {
+				return fmt.Errorf("--%s: %w", key, err)
+			}
+		}
 	}
-	// Reverse (big-endian)
-	for i, j := 0, len(encoded)-1; i < j; i, j = i+1, j-1 {
-		encoded[i], encoded[j] = encoded[j], encoded[i]
+	if v, ok := opts["tags"]; ok && v != "" {
+		for _, tag := range strings.Split(v, ",") {
+			if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+				return fmt.Errorf("--tags: %w", err)
+			}
+		}
 	}
-	return string(encoded)
+	return nil
+}
+
+// validateBatchOpIdentifiers rejects a batch op carrying any invalid
+// Things identifier, for the same reason as validateIdentifierOpts.
+func validateBatchOpIdentifiers(op BatchOp) error {
+	check := map[string]string{
+		"uuid": op.UUID, "project": op.Project, "area": op.Area, "heading": op.Heading,
+	}
+	for name, v := range check {
+		if v == "" {
+			continue
+		}
+		if err := thingscloud.ValidateUUID(v); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	for _, tag := range op.Tags {
+		if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+			return fmt.Errorf("tags: %w", err)
+		}
+	}
+	return nil
 }
 
 func nowTs() float64 {
@@ -882,6 +908,9 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create task", err)
+	}
 
 	taskUUID := opts["uuid"]
 	if taskUUID == "" {
@@ -904,6 +933,9 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 func cmdAddChecklist(history *thingscloud.History, taskUUID string, args []string) {
 	requireArgs(args, 1, `things-cli add-checklist <task-uuid> "Item 1,Item 2,Item 3"`)
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("add-checklist", err)
+	}
 
 	items := strings.Split(args[0], ",")
 	cmdWriteChecklistItems(history, taskUUID, items)
@@ -915,6 +947,12 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	opts := parseArgs(args)
 	if len(opts) == 0 {
 		fatalf("Usage: things-cli edit <uuid> [--title ...] [--note ...] [--when today|anytime|someday|inbox] [--deadline YYYY-MM-DD] [--scheduled YYYY-MM-DD] [--area UUID] [--project UUID] [--heading UUID] [--tags UUID,...]")
+	}
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("edit", err)
+	}
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("edit", err)
 	}
 
 	u := newTaskUpdate()
@@ -1189,6 +1227,9 @@ func buildBatchCreate(op BatchOp) (thingscloud.Identifiable, map[string]string, 
 	if op.Title == "" {
 		return nil, nil, fmt.Errorf("create requires title")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
 	taskUUID := op.UUID
 	if taskUUID == "" {
@@ -1287,6 +1328,9 @@ func buildBatchMoveToProject(op BatchOp) (thingscloud.Identifiable, map[string]s
 	if op.Project == "" {
 		return nil, nil, fmt.Errorf("move-to-project requires project")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
 	u := newTaskUpdate().Project(op.Project).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
@@ -1301,6 +1345,9 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 	if op.Area == "" {
 		return nil, nil, fmt.Errorf("move-to-area requires area")
 	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
 
 	u := newTaskUpdate().Area(op.Area).Anytime()
 	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
@@ -1311,6 +1358,9 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
 	if op.UUID == "" {
 		return nil, nil, fmt.Errorf("edit requires uuid")
+	}
+	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
 	}
 
 	u := newTaskUpdate()
