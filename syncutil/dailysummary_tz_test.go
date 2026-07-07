@@ -54,3 +54,16 @@ func TestBuildDailySummary_LocalMidnightBoundary(t *testing.T) {
 		t.Errorf("Completed = %d, want 1 — yesterday's local-evening change must not count toward today", summary.Completed)
 	}
 }
+
+func TestStartOfToday_LocalMidnight(t *testing.T) {
+	zone := time.FixedZone("UTC+10", 10*3600)
+	orig := timeNow
+	timeNow = func() time.Time { return time.Date(2026, 7, 6, 1, 0, 0, 0, zone) }
+	defer func() { timeNow = orig }()
+
+	got := StartOfToday()
+	want := time.Date(2026, 7, 6, 0, 0, 0, 0, zone)
+	if !got.Equal(want) {
+		t.Errorf("StartOfToday() = %v, want %v (local midnight)", got, want)
+	}
+}
