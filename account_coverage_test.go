@@ -217,13 +217,10 @@ func TestAccountService_ChangePassword(t *testing.T) {
 		if cap.Body["password"] != "newpw" {
 			t.Errorf("password = %v, want newpw", cap.Body["password"])
 		}
-		// NOTE: current behavior — ChangePassword does NOT send an Authorization
-		// header, unlike Delete/AcceptSLA/Confirm. This test documents that; see
-		// the reported finding. If the server enforces auth this request would
-		// fail in production. If ChangePassword is fixed to authenticate, update
-		// this expectation to "Password old".
-		if cap.Authorization != "" {
-			t.Errorf("Authorization = %q, want empty (current behavior: no auth header sent)", cap.Authorization)
+		// Changing a password must be authenticated with the OLD password,
+		// like every other account mutation (Delete/AcceptSLA/Confirm).
+		if cap.Authorization != "Password old" {
+			t.Errorf("Authorization = %q, want %q", cap.Authorization, "Password old")
 		}
 	})
 
