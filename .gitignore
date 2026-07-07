@@ -26,3 +26,9 @@
 # HAR files (may contain credentials)
 *.har
 docs/blog-post.md
+
+# Built binaries
+/soak
+/things-cli
+/example
+/cmd/things-cli/things-cli
