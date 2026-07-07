@@ -45,17 +45,17 @@ type LocationInfo struct {
 
 // RichChange is the enhanced change output with full context
 type RichChange struct {
-	Type        string       `json:"type"`
-	UUID        string       `json:"uuid"`
-	Title       string       `json:"title,omitempty"`
-	Context     *TaskContext `json:"context,omitempty"`
+	Type        string        `json:"type"`
+	UUID        string        `json:"uuid"`
+	Title       string        `json:"title,omitempty"`
+	Context     *TaskContext  `json:"context,omitempty"`
 	From        *LocationInfo `json:"from,omitempty"`
 	To          *LocationInfo `json:"to,omitempty"`
-	Where       string       `json:"where,omitempty"` // for creates: inbox, today, etc.
-	Tags        []EntityRef  `json:"tags,omitempty"`
-	Date        string       `json:"date,omitempty"` // for scheduled
-	CompletedAt *time.Time   `json:"completedAt,omitempty"`
-	Timestamp   time.Time    `json:"timestamp"`
+	Where       string        `json:"where,omitempty"` // for creates: inbox, today, etc.
+	Tags        []EntityRef   `json:"tags,omitempty"`
+	Date        string        `json:"date,omitempty"` // for scheduled
+	CompletedAt *time.Time    `json:"completedAt,omitempty"`
+	Timestamp   time.Time     `json:"timestamp"`
 }
 
 type TagInfo struct {
@@ -113,13 +113,13 @@ func main() {
 	// Flags
 	dbPath := flag.String("db", "", "Path to SQLite database (default: ~/.things-workflow/sync.db)")
 	humanReadable := flag.Bool("human", false, "Human-readable output instead of JSON")
-	
+
 	// Workflow commands
 	cmdToday := flag.Bool("today", false, "Show today view for morning review")
 	cmdInbox := flag.Bool("inbox", false, "Show inbox for triage")
 	cmdReview := flag.Bool("review", false, "Show evening review")
 	cmdPatterns := flag.Bool("patterns", false, "Show behavioral patterns")
-	
+
 	flag.Parse()
 
 	// Credentials from env
@@ -200,7 +200,7 @@ func resolveEntityRef(uuid string, syncer *sync.Syncer) *EntityRef {
 		return nil
 	}
 	state := syncer.State()
-	
+
 	// Try task (could be project or heading)
 	if task, err := state.Task(uuid); err == nil && task != nil {
 		return &EntityRef{UUID: uuid, Title: task.Title}
@@ -213,7 +213,7 @@ func resolveEntityRef(uuid string, syncer *sync.Syncer) *EntityRef {
 	if tag, err := state.Tag(uuid); err == nil && tag != nil {
 		return &EntityRef{UUID: uuid, Title: tag.Title}
 	}
-	
+
 	return &EntityRef{UUID: uuid, Title: "(unknown)"}
 }
 
@@ -222,15 +222,15 @@ func getTaskContext(task *things.Task, syncer *sync.Syncer) *TaskContext {
 	if task == nil {
 		return nil
 	}
-	
+
 	ctx := &TaskContext{}
 	state := syncer.State()
-	
+
 	// Heading (action group)
 	if len(task.ActionGroupIDs) > 0 {
 		ctx.Heading = resolveEntityRef(task.ActionGroupIDs[0], syncer)
 	}
-	
+
 	// Project (parent task that is a project)
 	if len(task.ParentTaskIDs) > 0 {
 		for _, parentID := range task.ParentTaskIDs {
@@ -242,19 +242,19 @@ func getTaskContext(task *things.Task, syncer *sync.Syncer) *TaskContext {
 			}
 		}
 	}
-	
+
 	// Area
 	if len(task.AreaIDs) > 0 {
 		if area, err := state.Area(task.AreaIDs[0]); err == nil && area != nil {
 			ctx.Area = &EntityRef{UUID: area.UUID, Title: area.Title}
 		}
 	}
-	
+
 	// Check if context is empty
 	if ctx.Heading == nil && ctx.Project == nil && ctx.Area == nil {
 		return nil
 	}
-	
+
 	return ctx
 }
 
@@ -263,17 +263,17 @@ func getTaskLocation(task *things.Task, syncer *sync.Syncer) string {
 	if task == nil {
 		return "unknown"
 	}
-	
+
 	// Check trash first
 	if task.InTrash {
 		return "trash"
 	}
-	
+
 	// Check status
 	if task.Status == things.TaskStatusCompleted {
 		return "completed"
 	}
-	
+
 	// Based on schedule/start state
 	switch task.Schedule {
 	case things.TaskScheduleInbox:
@@ -291,20 +291,20 @@ func getTaskLocation(task *things.Task, syncer *sync.Syncer) string {
 		}
 		return "someday"
 	}
-	
+
 	return "unknown"
 }
 
 // buildRichChanges converts sync changes to rich format with context
 func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 	var result []RichChange
-	
+
 	for _, c := range changes {
 		rich := RichChange{
 			UUID:      c.EntityUUID(),
 			Timestamp: c.Timestamp(),
 		}
-		
+
 		switch v := c.(type) {
 		case sync.TaskCreated:
 			rich.Type = "task_created"
@@ -314,7 +314,7 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 				rich.Context = getTaskContext(v.Task, syncer)
 				rich.Tags = getTaskTags(v.Task, syncer)
 			}
-			
+
 		case sync.TaskCompleted:
 			rich.Type = "task_completed"
 			if v.Task != nil {
@@ -324,14 +324,14 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 					rich.CompletedAt = v.Task.CompletionDate
 				}
 			}
-			
+
 		case sync.TaskTitleChanged:
 			rich.Type = "task_updated"
 			if v.Task != nil {
 				rich.Title = v.Task.Title
 				rich.Context = getTaskContext(v.Task, syncer)
 			}
-			
+
 		case sync.TaskMovedToToday:
 			rich.Type = "task_today"
 			if v.Task != nil {
@@ -339,14 +339,14 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 				rich.Context = getTaskContext(v.Task, syncer)
 				rich.To = &LocationInfo{Location: "today"}
 			}
-			
+
 		case sync.TaskMovedToInbox:
 			rich.Type = "task_moved"
 			if v.Task != nil {
 				rich.Title = v.Task.Title
 				rich.To = &LocationInfo{Location: "inbox"}
 			}
-			
+
 		case sync.TaskMovedToAnytime:
 			rich.Type = "task_moved"
 			if v.Task != nil {
@@ -354,7 +354,7 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 				rich.Context = getTaskContext(v.Task, syncer)
 				rich.To = &LocationInfo{Location: "anytime"}
 			}
-			
+
 		case sync.TaskMovedToSomeday:
 			rich.Type = "task_deferred"
 			if v.Task != nil {
@@ -362,7 +362,7 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 				rich.Context = getTaskContext(v.Task, syncer)
 				rich.To = &LocationInfo{Location: "someday"}
 			}
-			
+
 		case sync.TaskMovedToUpcoming:
 			rich.Type = "task_scheduled"
 			if v.Task != nil {
@@ -374,21 +374,21 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 					rich.To.Date = rich.Date
 				}
 			}
-			
+
 		case sync.TaskTrashed:
 			rich.Type = "task_trashed"
 			if v.Task != nil {
 				rich.Title = v.Task.Title
 				rich.Context = getTaskContext(v.Task, syncer)
 			}
-			
+
 		case sync.TaskTagsChanged:
 			rich.Type = "task_tagged"
 			if v.Task != nil {
 				rich.Title = v.Task.Title
 				rich.Tags = getTaskTags(v.Task, syncer)
 			}
-			
+
 		case sync.TaskAssignedToProject:
 			rich.Type = "task_moved"
 			if v.Task != nil {
@@ -401,19 +401,19 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 					}
 				}
 			}
-			
+
 		case sync.ProjectCreated:
 			rich.Type = "project_created"
 			if v.Project != nil {
 				rich.Title = v.Project.Title
 			}
-			
+
 		case sync.ProjectCompleted:
 			rich.Type = "project_completed"
 			if v.Project != nil {
 				rich.Title = v.Project.Title
 			}
-			
+
 		case sync.HeadingCreated:
 			rich.Type = "heading_created"
 			if v.Heading != nil {
@@ -425,7 +425,7 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 					}
 				}
 			}
-			
+
 		case sync.HeadingTitleChanged:
 			rich.Type = "heading_updated"
 			if v.Heading != nil {
@@ -436,27 +436,27 @@ func buildRichChanges(changes []sync.Change, syncer *sync.Syncer) []RichChange {
 					}
 				}
 			}
-			
+
 		case sync.AreaCreated:
 			rich.Type = "area_created"
 			if v.Area != nil {
 				rich.Title = v.Area.Title
 			}
-			
+
 		case sync.TagCreated:
 			rich.Type = "tag_created"
 			if v.Tag != nil {
 				rich.Title = v.Tag.Title
 			}
-			
+
 		default:
 			// Generic fallback
 			rich.Type = c.ChangeType()
 		}
-		
+
 		result = append(result, rich)
 	}
-	
+
 	return result
 }
 
@@ -465,16 +465,16 @@ func getTaskTags(task *things.Task, syncer *sync.Syncer) []EntityRef {
 	if task == nil || len(task.TagIDs) == 0 {
 		return nil
 	}
-	
+
 	var tags []EntityRef
 	state := syncer.State()
-	
+
 	for _, tagID := range task.TagIDs {
 		if tag, err := state.Tag(tagID); err == nil && tag != nil {
 			tags = append(tags, EntityRef{UUID: tag.UUID, Title: tag.Title})
 		}
 	}
-	
+
 	return tags
 }
 
@@ -649,7 +649,7 @@ func printTaskHuman(t TaskInfo) {
 
 func printChangeHuman(c RichChange) {
 	var desc string
-	
+
 	switch c.Type {
 	case "task_created":
 		desc = fmt.Sprintf("✚ Created: %s", c.Title)
@@ -697,7 +697,7 @@ func printChangeHuman(c RichChange) {
 	default:
 		desc = fmt.Sprintf("%s: %s", c.Type, c.Title)
 	}
-	
+
 	// Add context if available
 	if c.Context != nil && c.Type != "heading_created" {
 		var ctxParts []string
@@ -711,12 +711,12 @@ func printChangeHuman(c RichChange) {
 			desc += fmt.Sprintf(" (%s)", strings.Join(ctxParts, ", "))
 		}
 	}
-	
+
 	fmt.Printf("  %s\n", desc)
 }
 
 func printHuman(output Output) {
-	fmt.Printf("Synced: %d → %d (%d changes)\n", 
+	fmt.Printf("Synced: %d → %d (%d changes)\n",
 		output.Sync.LastIndex, output.Sync.NewIndex, output.Sync.ChangesCount)
 
 	// Show changes if any
@@ -758,17 +758,17 @@ func printHuman(output Output) {
 // ============================================
 
 type TodayView struct {
-	Tasks      []TaskInfo  `json:"tasks"`
-	Overloaded bool        `json:"overloaded"`
-	Alerts     []Alert     `json:"alerts"`
-	Summary    string      `json:"summary"`
+	Tasks      []TaskInfo `json:"tasks"`
+	Overloaded bool       `json:"overloaded"`
+	Alerts     []Alert    `json:"alerts"`
+	Summary    string     `json:"summary"`
 }
 
 type InboxView struct {
-	Items      []TaskInfo  `json:"items"`
-	Count      int         `json:"count"`
-	OldestDays int         `json:"oldestDays"`
-	Alerts     []Alert     `json:"alerts"`
+	Items      []TaskInfo `json:"items"`
+	Count      int        `json:"count"`
+	OldestDays int        `json:"oldestDays"`
+	Alerts     []Alert    `json:"alerts"`
 }
 
 type ReviewView struct {
@@ -779,25 +779,25 @@ type ReviewView struct {
 }
 
 type PatternView struct {
-	Rescheduled    []TaskInfo  `json:"rescheduled"`    // Tasks moved 3+ times
-	StaleInbox     []TaskInfo  `json:"staleInbox"`     // Inbox items >7 days
-	NeglectedAreas []string    `json:"neglectedAreas"` // Areas with no activity
+	Rescheduled    []TaskInfo `json:"rescheduled"`    // Tasks moved 3+ times
+	StaleInbox     []TaskInfo `json:"staleInbox"`     // Inbox items >7 days
+	NeglectedAreas []string   `json:"neglectedAreas"` // Areas with no activity
 }
 
 func printTodayView(syncer *sync.Syncer) {
 	state := syncer.State()
 	today, _ := state.TasksInToday(sync.QueryOpts{})
-	
+
 	view := TodayView{
 		Tasks:      []TaskInfo{},
 		Overloaded: len(today) > 5,
 		Alerts:     []Alert{},
 	}
-	
+
 	for _, t := range today {
 		info := taskToInfo(t, syncer, "today")
 		view.Tasks = append(view.Tasks, info)
-		
+
 		// Check for reschedule patterns
 		if info.MoveCount >= 3 {
 			view.Alerts = append(view.Alerts, Alert{
@@ -807,7 +807,7 @@ func printTodayView(syncer *sync.Syncer) {
 				Reason: fmt.Sprintf("rescheduled %d times - what's blocking this?", info.MoveCount),
 			})
 		}
-		
+
 		// Check for deadlines
 		if info.Deadline != "" {
 			deadline, _ := time.Parse("2006-01-02", info.Deadline)
@@ -821,16 +821,16 @@ func printTodayView(syncer *sync.Syncer) {
 			}
 		}
 	}
-	
+
 	if view.Overloaded {
 		view.Alerts = append(view.Alerts, Alert{
 			Type:   "overloaded",
 			Reason: fmt.Sprintf("Today has %d tasks - consider deferring some", len(today)),
 		})
 	}
-	
+
 	view.Summary = fmt.Sprintf("%d tasks for today", len(today))
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(view)
@@ -839,21 +839,21 @@ func printTodayView(syncer *sync.Syncer) {
 func printInboxView(syncer *sync.Syncer) {
 	state := syncer.State()
 	inbox, _ := state.TasksInInbox(sync.QueryOpts{})
-	
+
 	view := InboxView{
 		Items:  []TaskInfo{},
 		Count:  len(inbox),
 		Alerts: []Alert{},
 	}
-	
+
 	for _, t := range inbox {
 		info := taskToInfo(t, syncer, "inbox")
 		view.Items = append(view.Items, info)
-		
+
 		if info.AgeDays > view.OldestDays {
 			view.OldestDays = info.AgeDays
 		}
-		
+
 		if info.AgeDays >= 7 {
 			view.Alerts = append(view.Alerts, Alert{
 				Type:   "stale",
@@ -863,14 +863,14 @@ func printInboxView(syncer *sync.Syncer) {
 			})
 		}
 	}
-	
+
 	if len(inbox) > 10 {
 		view.Alerts = append(view.Alerts, Alert{
 			Type:   "inbox_overflow",
 			Reason: fmt.Sprintf("inbox has %d items - needs triage", len(inbox)),
 		})
 	}
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(view)
@@ -878,8 +878,8 @@ func printInboxView(syncer *sync.Syncer) {
 
 func printReviewView(syncer *sync.Syncer) {
 	state := syncer.State()
-	todayStart := time.Now().Truncate(24 * time.Hour)
-	
+	todayStart := syncutil.StartOfToday()
+
 	// Get completed tasks today
 	changes, _ := syncer.ChangesSince(todayStart)
 	completedUUIDs := make(map[string]bool)
@@ -888,13 +888,13 @@ func printReviewView(syncer *sync.Syncer) {
 			completedUUIDs[c.EntityUUID()] = true
 		}
 	}
-	
+
 	view := ReviewView{
 		CompletedToday: []TaskInfo{},
 		StillInToday:   []TaskInfo{},
 		Summary:        syncutil.BuildDailySummary(syncer),
 	}
-	
+
 	// Get completed tasks
 	for uuid := range completedUUIDs {
 		if task, err := state.Task(uuid); err == nil && task != nil {
@@ -902,21 +902,21 @@ func printReviewView(syncer *sync.Syncer) {
 			view.CompletedToday = append(view.CompletedToday, info)
 		}
 	}
-	
+
 	// Get remaining today tasks
 	today, _ := state.TasksInToday(sync.QueryOpts{})
 	for _, t := range today {
 		info := taskToInfo(t, syncer, "today")
 		view.StillInToday = append(view.StillInToday, info)
 	}
-	
+
 	// Count tasks moved today
 	for _, c := range changes {
 		if strings.HasPrefix(c.ChangeType(), "TaskMovedTo") {
 			view.MovedCount++
 		}
 	}
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(view)
@@ -924,13 +924,13 @@ func printReviewView(syncer *sync.Syncer) {
 
 func printPatternsView(syncer *sync.Syncer) {
 	state := syncer.State()
-	
+
 	view := PatternView{
 		Rescheduled:    []TaskInfo{},
 		StaleInbox:     []TaskInfo{},
 		NeglectedAreas: []string{},
 	}
-	
+
 	// Find rescheduled tasks (anywhere, not just today)
 	today, _ := state.TasksInToday(sync.QueryOpts{})
 	for _, t := range today {
@@ -939,7 +939,7 @@ func printPatternsView(syncer *sync.Syncer) {
 			view.Rescheduled = append(view.Rescheduled, info)
 		}
 	}
-	
+
 	// Also check all tasks for reschedule patterns
 	allTasks, _ := state.AllTasks(sync.QueryOpts{})
 	seenUUIDs := make(map[string]bool)
@@ -955,7 +955,7 @@ func printPatternsView(syncer *sync.Syncer) {
 			view.Rescheduled = append(view.Rescheduled, info)
 		}
 	}
-	
+
 	// Stale inbox items
 	inbox, _ := state.TasksInInbox(sync.QueryOpts{})
 	for _, t := range inbox {
@@ -964,9 +964,9 @@ func printPatternsView(syncer *sync.Syncer) {
 			view.StaleInbox = append(view.StaleInbox, info)
 		}
 	}
-	
+
 	// TODO: Track area activity for neglected areas
-	
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(view)

@@ -32,6 +32,8 @@ package main
 import (
     "fmt"
     "os"
+    "time"
+
     things "github.com/arthursoares/things-cloud-sdk"
 )
 
@@ -49,27 +51,42 @@ func main() {
     }
     fmt.Printf("✓ Connected: %s\n", resp.Email)
 
-    // Get or create a history
-    histories, _ := client.Histories()
-    var historyID string
-    if len(histories) > 0 {
-        historyID = histories[0].ID
-    } else {
-        hist, _ := client.CreateHistory()
-        historyID = hist.ID
+    // Get your account's history and sync it (required before writing —
+    // the commit's ancestor-index comes from the synced head)
+    history, err := client.OwnHistory()
+    if err != nil {
+        panic(err)
+    }
+    if err := history.Sync(); err != nil {
+        panic(err)
     }
 
-    // Create a task
-    task := things.Task{
-        UUID:  things.GenerateUUID(),
-        Title: things.String("My first task from the SDK!"),
+    // Create a task. NewUUID() produces the canonical Base58 identifier
+    // format Things requires; Write rejects anything else.
+    task := things.TaskActionItem{
+        Item: things.Item{
+            UUID:   things.NewUUID(),
+            Kind:   things.ItemKindTask,
+            Action: things.ItemActionCreated,
+        },
+        P: things.TaskActionItemPayload{
+            Title:        things.String("My first task from the SDK!"),
+            Status:       things.Status(things.TaskStatusPending),
+            Schedule:     things.Schedule(things.TaskScheduleInbox),
+            CreationDate: things.Time(time.Now()),
+        },
     }
 
-    items := []things.Item{things.NewCreateTaskItem(task)}
-    client.Write(historyID, items, -1)
-    fmt.Printf("✓ Created task: %s\n", *task.Title)
+    if err := history.Write(task); err != nil {
+        panic(err)
+    }
+    fmt.Println("✓ Created task")
 }
 ```
+
+> **Tip:** for writes, prefer `things-cli` (below) — its payloads replicate
+> real Things.app traffic field-for-field and are verified against HAR
+> captures. The raw SDK write API is lower-level and sends sparse payloads.
 
 **3. Run it:**
 
@@ -157,7 +174,8 @@ things-cli purge <uuid>
 things-cli move-to-today <uuid>
 
 # Batch (all operations in one HTTP request - much faster!)
-echo '[{"cmd":"complete","uuid":"abc"},{"cmd":"trash","uuid":"def"}]' | things-cli batch
+# UUIDs must be canonical Base58 identifiers, as returned by create/list
+echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":"VJ1edXTP9q3PmFDUuy8EQh"}]' | things-cli batch
 ```
 
 ### Examples
@@ -177,8 +195,8 @@ things-cli create "Review PR" --area <area-uuid> --when today --deadline 2026-02
 echo '[
   {"cmd": "create", "title": "Task 1"},
   {"cmd": "create", "title": "Task 2"},
-  {"cmd": "move-to-project", "uuid": "abc123", "project": "proj-uuid"},
-  {"cmd": "complete", "uuid": "def456"}
+  {"cmd": "move-to-project", "uuid": "VJ1edXTP9q3PmFDUuy8EQh", "project": "BXmAcvS6yK1eDhW31MuZrL"},
+  {"cmd": "complete", "uuid": "FQxaqvLBkbR5q2Q5oRoknc"}
 ]' | things-cli batch
 ```
 
@@ -192,6 +210,7 @@ package main
 import (
     "fmt"
     "os"
+
     things "github.com/arthursoares/things-cloud-sdk"
 )
 
@@ -202,41 +221,36 @@ func main() {
         os.Getenv("THINGS_PASSWORD"),
     )
 
-    // Create a history
-    history, _ := client.CreateHistory()
+    history, _ := client.OwnHistory()
+    _ = history.Sync()
 
-    // Create a project with tasks
-    project := things.Task{
-        UUID:     things.GenerateUUID(),
-        Title:    things.String("My Project"),
-        TaskType: things.TaskTypePtr(things.TaskTypeProject),
-        Status:   things.Status(things.TaskStatusPending),
-        Schedule: things.Schedule(things.TaskScheduleAnytime),
+    // Create a project, then a task referencing it
+    projectID := things.NewUUID()
+    project := things.TaskActionItem{
+        Item: things.Item{UUID: projectID, Kind: things.ItemKindTask, Action: things.ItemActionCreated},
+        P: things.TaskActionItemPayload{
+            Title:    things.String("My Project"),
+            Type:     things.TaskTypePtr(things.TaskTypeProject),
+            Schedule: things.Schedule(things.TaskScheduleAnytime),
+        },
     }
 
-    task1 := things.Task{
-        UUID:      things.GenerateUUID(),
-        Title:     things.String("First task"),
-        ProjectID: things.String(project.UUID),
-        Schedule:  things.Schedule(things.TaskScheduleAnytime),
+    task := things.TaskActionItem{
+        Item: things.Item{UUID: things.NewUUID(), Kind: things.ItemKindTask, Action: things.ItemActionCreated},
+        P: things.TaskActionItemPayload{
+            Title:         things.String("First task"),
+            ParentTaskIDs: &[]string{projectID},
+            Schedule:      things.Schedule(things.TaskScheduleAnytime),
+        },
     }
 
-    task2 := things.Task{
-        UUID:      things.GenerateUUID(),
-        Title:     things.String("Second task"),
-        ProjectID: things.String(project.UUID),
-        Schedule:  things.Schedule(things.TaskScheduleAnytime),
+    // One commit per Write; each item needs a unique canonical UUID —
+    // Write() validates both and refuses anything that would corrupt
+    // the sync history.
+    if err := history.Write(project, task); err != nil {
+        panic(err)
     }
-
-    // Write all items in one batch
-    items := []things.Item{
-        things.NewCreateTaskItem(project),
-        things.NewCreateTaskItem(task1),
-        things.NewCreateTaskItem(task2),
-    }
-
-    client.Write(history.ID, items, -1)
-    fmt.Println("✓ Created project with 2 tasks")
+    fmt.Println("✓ Created project with a task")
 }
 ```
 
@@ -355,6 +369,8 @@ Key findings from reverse engineering the Things Cloud sync protocol:
 - **Headings (`tp=2`) must have `st=1`** (anytime). `st=0` (inbox) crashes Things.app.
 - **Tasks in projects, headings, or areas** should default to `st=1` (anytime) — they've been triaged out of inbox.
 - **Kind strings**: `Task6`, `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2`
+
+Since v0.3.0 the SDK enforces the identifier rules instead of trusting callers: `things.NewUUID()` generates canonical Base58 identifiers (one leading `1` per leading zero byte — a subtlety whose absence used to corrupt ~1 in 256 creates), `things.ValidateUUID()` checks any identifier, and `History.Write()` refuses items with invalid or duplicate UUIDs before anything reaches the server.
 
 See `docs/client-side-bugs.md` for the full investigation and crash analysis.
 

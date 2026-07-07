@@ -70,8 +70,19 @@ type DailySummary struct {
 }
 
 // BuildDailySummary calculates activity stats from today's changes.
+// timeNow is a test seam.
+var timeNow = time.Now
+
+// StartOfToday returns local midnight of the current day. Use this for any
+// "today" cutoff — time.Now().Truncate(24h) is midnight UTC and counts part
+// of yesterday (or misses part of today) in every other timezone.
+func StartOfToday() time.Time {
+	now := timeNow()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+}
+
 func BuildDailySummary(syncer *sync.Syncer) DailySummary {
-	today := time.Now().Truncate(24 * time.Hour)
+	today := StartOfToday()
 	changes, _ := syncer.ChangesSince(today)
 
 	summary := DailySummary{}

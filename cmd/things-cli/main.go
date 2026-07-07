@@ -588,7 +588,11 @@ func initCLI(syncHistoryHead bool) *cliContext {
 	username := requireEnv("THINGS_USERNAME")
 	password := requireEnv("THINGS_PASSWORD")
 
-	c := thingscloud.New(thingscloud.APIEndpoint, username, password)
+	endpoint := thingscloud.APIEndpoint
+	if v := os.Getenv("THINGS_ENDPOINT"); v != "" {
+		endpoint = v // point the CLI at a test server
+	}
+	c := thingscloud.New(endpoint, username, password)
 	if os.Getenv("THINGS_DEBUG") != "" {
 		c.Debug = true
 	}

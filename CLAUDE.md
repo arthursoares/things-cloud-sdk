@@ -28,8 +28,9 @@ All source code lives at the package root (`package thingscloud`, module `github
 
 The SDK models all changes as immutable **Items** (events). A **History** is a sync stream identified by a UUID. The client pushes/pulls Items through Histories to stay in sync with the Things Cloud server.
 
-- **`client.go`** — HTTP client with `ClientInfo` header and configurable `Debug` logging, base endpoint `https://cloud.culturedcode.com`
-- **`histories.go`** — History CRUD and sync operations (list, create, delete, read/write items with ancestor indices). The `Write()` method accepts multiple items for batching.
+- **`client.go`** — HTTP client with `ClientInfo` header, configurable `Debug` logging, 60s timeout, and typed `HTTPError` for non-OK responses; base endpoint `https://cloud.culturedcode.com`
+- **`base58.go`** — Canonical Base58 identifier handling: `NewUUID()`, `EncodeUUID`/`DecodeUUID`, `ValidateUUID`. Always generate identifiers through this API.
+- **`histories.go`** — History CRUD and sync operations (list, create, delete, read/write items with ancestor indices). `Write()` accepts multiple items for batching and rejects invalid or duplicate UUIDs before POSTing.
 - **`items.go`** — Item construction: every mutation (create/modify/delete) on a Task, Area, Tag, CheckListItem, or Tombstone produces an Item
 - **`types.go`** — Domain types: `Task` (with `TaskType` enum: Task/Project/Heading), `Area`, `Tag`, `CheckListItem`, `Tombstone`, plus custom JSON types (`Timestamp`, `Boolean`)
 - **`notes.go`** — Structured `Note` type with full-text and delta patch support (`ApplyPatches`)
