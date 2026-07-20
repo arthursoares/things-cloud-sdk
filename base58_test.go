@@ -1,6 +1,7 @@
 package thingscloud
 
 import (
+	"crypto/sha1"
 	"strings"
 	"testing"
 
@@ -56,6 +57,34 @@ func TestEncodeLegacyIdentifier_RecurrenceInstance(t *testing.T) {
 	}
 	if got := EncodeLegacyIdentifier(strings.ToLower(legacyID)); got == want {
 		t.Errorf("EncodeLegacyIdentifier normalized recurrence identifier case; input must be hashed exactly as stored")
+	}
+}
+
+func TestEncodeLegacyIdentifier_MalformedRecurrenceSuffixes(t *testing.T) {
+	t.Parallel()
+
+	// Near misses of the <uuid>-YYYYMMDD form must hash as ordinary
+	// identifier text, never through the recurrence formula.
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"non-digit in date", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-2024013X"},
+		{"date too short", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-2024013"},
+		{"date too long", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-202401310"},
+		{"invalid uuid prefix", "GGGGGGGG-BBBB-CCCC-DDDD-EEEEEEEEEEEE-20240131"},
+		{"missing date separator", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE920240131"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sum := sha1.Sum([]byte(test.id))
+			var u uuid.UUID
+			copy(u[:], sum[:len(u)])
+			want := EncodeUUID(u)
+			if got := EncodeLegacyIdentifier(test.id); got != want {
+				t.Errorf("EncodeLegacyIdentifier(%q) = %q, want ordinary derivation %q", test.id, got, want)
+			}
+		})
 	}
 }
 
