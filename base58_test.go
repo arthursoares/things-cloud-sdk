@@ -33,6 +33,32 @@ func TestEncodeUUID_AllZero(t *testing.T) {
 	}
 }
 
+func TestEncodeLegacyIdentifier(t *testing.T) {
+	t.Parallel()
+
+	const legacyID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+	const want = "LXmxn9gakySzcEjKj1DtgD"
+	if got := EncodeLegacyIdentifier(legacyID); got != want {
+		t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", legacyID, got, want)
+	}
+	if got := EncodeLegacyIdentifier(strings.ToLower(legacyID)); got == want {
+		t.Errorf("EncodeLegacyIdentifier normalized identifier case; input must be hashed exactly as stored")
+	}
+}
+
+func TestEncodeLegacyIdentifier_RecurrenceInstance(t *testing.T) {
+	t.Parallel()
+
+	const legacyID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-20240131"
+	const want = "H8Xu72gj7fooPuYoBMZ5TK"
+	if got := EncodeLegacyIdentifier(legacyID); got != want {
+		t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", legacyID, got, want)
+	}
+	if got := EncodeLegacyIdentifier(strings.ToLower(legacyID)); got == want {
+		t.Errorf("EncodeLegacyIdentifier normalized recurrence identifier case; input must be hashed exactly as stored")
+	}
+}
+
 func TestEncodeDecodeUUID_RoundTrip(t *testing.T) {
 	t.Parallel()
 

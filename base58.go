@@ -1,6 +1,7 @@
 package thingscloud
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"math/big"
 	"strings"
@@ -37,6 +38,55 @@ func EncodeUUID(u uuid.UUID) string {
 		encoded[i], encoded[j] = encoded[j], encoded[i]
 	}
 	return string(encoded)
+}
+
+// EncodeLegacyIdentifier derives the current Base58 identifier for an object
+// created before Things Cloud's identifier migration. Old history items
+// (Task3, Task4, Area2, ...) key objects by identifier strings such as
+// uppercase UUIDs; newer items (Task6, ...) key the same objects by
+//
+//	Base58(SHA1(legacyID)[:16])
+//
+// The history contains no records linking the two generations; this
+// derivation is the only link. legacyID must be the identifier text exactly
+// as stored in the history: hashing is byte-exact, so any normalization
+// (such as lowercasing a UUID) yields a different identifier. SHA-1 mirrors
+// the derivation Things itself performs; it is not a security primitive
+// here.
+//
+// Recurring-task instances use composite identifiers of the form
+// <uuid>-YYYYMMDD and hash in two steps: first the <uuid> prefix alone,
+// then its raw 16-byte digest followed by the "-YYYYMMDD" text.
+func EncodeLegacyIdentifier(legacyID string) string {
+	input := []byte(legacyID)
+	if prefix, suffix, ok := splitLegacyRecurrenceIdentifier(legacyID); ok {
+		prefixSum := sha1.Sum([]byte(prefix))
+		input = make([]byte, 0, 16+len(suffix))
+		input = append(input, prefixSum[:16]...)
+		input = append(input, suffix...)
+	}
+	sum := sha1.Sum(input)
+	var u uuid.UUID
+	copy(u[:], sum[:len(u)])
+	return EncodeUUID(u)
+}
+
+func splitLegacyRecurrenceIdentifier(id string) (string, []byte, bool) {
+	const uuidLength = 36
+	const dateSuffixLength = len("-YYYYMMDD")
+	if len(id) != uuidLength+dateSuffixLength {
+		return "", nil, false
+	}
+	prefix := id[:uuidLength]
+	if _, err := uuid.Parse(prefix); err != nil || id[uuidLength] != '-' {
+		return "", nil, false
+	}
+	for i := uuidLength + 1; i < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			return "", nil, false
+		}
+	}
+	return prefix, []byte(id[uuidLength:]), true
 }
 
 // DecodeUUID decodes a canonical Base58 identifier back into a UUID.
