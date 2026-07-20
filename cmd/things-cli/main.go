@@ -513,7 +513,14 @@ type cliContext struct {
 	history *thingscloud.History
 }
 
+// cliStateCacheVersion marks which generation of replay logic built a cached
+// state. Caches with any other version are ignored, forcing a full replay.
+// Bump it whenever replay output changes for the same history, e.g. when
+// object keys or memory.State's representation change.
+const cliStateCacheVersion = 1
+
 type cliStateCache struct {
+	Version     int           `json:"version"`
 	HistoryID   string        `json:"historyId"`
 	ServerIndex int           `json:"serverIndex"`
 	State       *memory.State `json:"state"`
@@ -550,6 +557,9 @@ func loadCLIStateCache(path string) (*cliStateCache, error) {
 	if err := json.Unmarshal(bs, &cache); err != nil {
 		return nil, err
 	}
+	if cache.Version != cliStateCacheVersion {
+		return nil, nil
+	}
 	if cache.State == nil {
 		cache.State = memory.NewState()
 	} else {
@@ -577,6 +587,7 @@ func saveCLIStateCache(path string, cache *cliStateCache) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	cache.Version = cliStateCacheVersion
 	bs, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err

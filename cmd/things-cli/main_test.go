@@ -260,6 +260,9 @@ func TestCLIStateCacheRoundTrip(t *testing.T) {
 	if loaded.HistoryID != "history-1" {
 		t.Fatalf("HistoryID = %q, want history-1", loaded.HistoryID)
 	}
+	if loaded.Version != cliStateCacheVersion {
+		t.Fatalf("Version = %d, want %d", loaded.Version, cliStateCacheVersion)
+	}
 	if loaded.ServerIndex != 42 {
 		t.Fatalf("ServerIndex = %d, want 42", loaded.ServerIndex)
 	}
@@ -297,6 +300,21 @@ func TestCLIStateCacheNormalizesEmptyState(t *testing.T) {
 	}
 	if loaded.State.CheckListItems == nil {
 		t.Fatal("CheckListItems map was not initialized")
+	}
+}
+
+func TestCLIStateCacheRejectsOldVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"historyId":"history-1","serverIndex":7,"state":{}}`), 0o600); err != nil {
+		t.Fatalf("writing old cache: %v", err)
+	}
+
+	cache, err := loadCLIStateCache(path)
+	if err != nil {
+		t.Fatalf("loadCLIStateCache failed: %v", err)
+	}
+	if cache != nil {
+		t.Fatalf("old-version cache was accepted: %#v", cache)
 	}
 }
 
