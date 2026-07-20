@@ -17,15 +17,15 @@ func main() {
 
 	// Get the LAST batch (most recent items)
 	fmt.Printf("LatestServerIndex: %d\n", history.LatestServerIndex)
-	
+
 	// Start from near the end
 	startIndex := history.LatestServerIndex - 100
 	if startIndex < 0 {
 		startIndex = 0
 	}
-	
+
 	items, _, _ := history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
-	
+
 	fmt.Printf("\n=== LAST %d ITEMS ===\n", len(items))
 	for _, item := range items {
 		var p map[string]interface{}
