@@ -22,7 +22,7 @@ type VerifyResponse struct {
 	Email              string          `json:"email"`
 	MaildropEmail      string          `json:"maildrop-email"`
 	Status             AccountStatus   `json:"status"`
-	HistoryKey string `json:"history-key"`
+	HistoryKey         string          `json:"history-key"`
 }
 
 // Verify checks that the provided API credentials are valid.

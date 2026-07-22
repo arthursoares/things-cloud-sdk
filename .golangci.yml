@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  default: none
+  exclusions:
+    generated: disable
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: false
+  exclusions:
+    generated: disable

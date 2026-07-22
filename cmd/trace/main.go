@@ -10,8 +10,8 @@ import (
 )
 
 func main() {
-	target := "2MNjM5gT" // "Book Teeth Cleaning" 
-	
+	target := "2MNjM5gT" // "Book Teeth Cleaning"
+
 	c := thingscloud.New(thingscloud.APIEndpoint, os.Getenv("THINGS_USERNAME"), os.Getenv("THINGS_PASSWORD"))
 	c.Verify()
 
