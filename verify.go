@@ -48,6 +48,8 @@ func (c *Client) Verify() (*VerifyResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return nil, err
+	}
 	return &v, nil
 }

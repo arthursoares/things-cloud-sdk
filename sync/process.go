@@ -29,7 +29,7 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback() // No-op if committed
+	defer func() { _ = tx.Rollback() }() // No-op if committed
 
 	// Store original db, swap in transaction
 	origDB := s.db
