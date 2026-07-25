@@ -245,7 +245,9 @@ func requireEnv(key string) string {
 func outputJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		fatal("write output", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

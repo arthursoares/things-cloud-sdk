@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	thingscloud "github.com/arthursoares/things-cloud-sdk"
@@ -10,10 +11,17 @@ import (
 
 func main() {
 	c := thingscloud.New(thingscloud.APIEndpoint, os.Getenv("THINGS_USERNAME"), os.Getenv("THINGS_PASSWORD"))
-	c.Verify()
+	if _, err := c.Verify(); err != nil {
+		log.Fatalf("verify: %v", err)
+	}
 
-	history, _ := c.OwnHistory()
-	history.Sync()
+	history, err := c.OwnHistory()
+	if err != nil {
+		log.Fatalf("own history: %v", err)
+	}
+	if err := history.Sync(); err != nil {
+		log.Fatalf("sync: %v", err)
+	}
 
 	state := memory.NewState()
 
@@ -21,7 +29,10 @@ func main() {
 	startIndex := 0
 	totalTask6 := 0
 	for {
-		items, hasMore, _ := history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
+		items, hasMore, err := history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
+		if err != nil {
+			log.Fatalf("read items: %v", err)
+		}
 
 		for _, item := range items {
 			if item.Kind == "Task6" {
@@ -29,7 +40,9 @@ func main() {
 			}
 		}
 
-		state.Update(items...)
+		if err := state.Update(items...); err != nil {
+			log.Fatalf("update state: %v", err)
+		}
 
 		if !hasMore {
 			break
