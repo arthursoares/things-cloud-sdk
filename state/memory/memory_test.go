@@ -141,7 +141,7 @@ func TestState_Update(t *testing.T) {
 		t.Parallel()
 		newState := func() *State {
 			s := NewState()
-			s.Update(things.Item{
+			if err := s.Update(things.Item{
 				Action: things.ItemActionCreated,
 				Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 				P:      json.RawMessage(newAreaPayload),
@@ -157,7 +157,9 @@ func TestState_Update(t *testing.T) {
 				Action: things.ItemActionCreated,
 				Kind:   things.ItemKindTask,
 				P:      json.RawMessage(newTaskPayload),
-			})
+			}); err != nil {
+				t.Fatal(err.Error())
+			}
 			return s
 		}
 
@@ -432,11 +434,13 @@ func TestState_Headings(t *testing.T) {
 		ParentTaskIDs:  &[]string{"proj-1"},
 	})
 
-	s.Update(
+	if err := s.Update(
 		things.Item{UUID: "proj-1", Kind: things.ItemKindTask, Action: things.ItemActionCreated, P: projPayload},
 		things.Item{UUID: "head-1", Kind: things.ItemKindTask, Action: things.ItemActionCreated, P: headPayload},
 		things.Item{UUID: "task-1", Kind: things.ItemKindTask, Action: things.ItemActionCreated, P: taskPayload},
-	)
+	); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
 
 	headings := s.Headings("proj-1")
 	if len(headings) != 1 {
@@ -468,9 +472,11 @@ func TestState_TasksWithoutArea_DeletedParent(t *testing.T) {
 		Type:          &taskType,
 		ParentTaskIDs: &[]string{"deleted-parent-id"},
 	})
-	s.Update(
+	if err := s.Update(
 		things.Item{UUID: "child-1", Kind: things.ItemKindTask, Action: things.ItemActionCreated, P: childPayload},
-	)
+	); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
 
 	// This should NOT panic even though "deleted-parent-id" is not in state.Tasks
 	result := s.TasksWithoutArea()

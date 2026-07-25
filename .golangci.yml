@@ -5,6 +5,7 @@ linters:
   enable:
     - bodyclose
     - copyloopvar
+    - errcheck
     - errorlint
     - govet
     - ineffassign
@@ -14,6 +15,8 @@ linters:
     - unused
   exclusions:
     generated: disable
+    presets:
+      - std-error-handling
 
 formatters:
   enable:

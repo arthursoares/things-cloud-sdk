@@ -156,9 +156,9 @@ func TestStateAccessors(t *testing.T) {
 	}
 	defer syncer.Close()
 
-	syncer.saveArea(&things.Area{UUID: "area-1", Title: "Work"})
-	syncer.saveTag(&things.Tag{UUID: "tag-1", Title: "Urgent", ShortHand: "u"})
-	syncer.saveTag(&things.Tag{UUID: "tag-2", Title: "Later", ShortHand: "l"})
+	mustSaveArea(t, syncer, &things.Area{UUID: "area-1", Title: "Work"})
+	mustSaveTag(t, syncer, &things.Tag{UUID: "tag-1", Title: "Urgent", ShortHand: "u"})
+	mustSaveTag(t, syncer, &things.Tag{UUID: "tag-2", Title: "Later", ShortHand: "l"})
 
 	state := syncer.State()
 
@@ -202,11 +202,11 @@ func TestStateProjectAreaAndChecklistQueries(t *testing.T) {
 	}
 	defer syncer.Close()
 
-	syncer.saveTask(&things.Task{UUID: "proj-1", Title: "Project", Type: things.TaskTypeProject})
-	syncer.saveTask(&things.Task{UUID: "in-project", Title: "In Project", Type: things.TaskTypeTask, ParentTaskIDs: []string{"proj-1"}, Status: things.TaskStatusPending})
-	syncer.saveTask(&things.Task{UUID: "in-area", Title: "In Area", Type: things.TaskTypeTask, AreaIDs: []string{"area-1"}, Status: things.TaskStatusPending})
-	syncer.saveChecklistItem(&things.CheckListItem{UUID: "cli-1", Title: "Step 1", Index: 0, TaskIDs: []string{"in-project"}})
-	syncer.saveChecklistItem(&things.CheckListItem{UUID: "cli-2", Title: "Step 2", Index: 1, TaskIDs: []string{"in-project"}})
+	mustSaveTask(t, syncer, &things.Task{UUID: "proj-1", Title: "Project", Type: things.TaskTypeProject})
+	mustSaveTask(t, syncer, &things.Task{UUID: "in-project", Title: "In Project", Type: things.TaskTypeTask, ParentTaskIDs: []string{"proj-1"}, Status: things.TaskStatusPending})
+	mustSaveTask(t, syncer, &things.Task{UUID: "in-area", Title: "In Area", Type: things.TaskTypeTask, AreaIDs: []string{"area-1"}, Status: things.TaskStatusPending})
+	mustSaveChecklistItem(t, syncer, &things.CheckListItem{UUID: "cli-1", Title: "Step 1", Index: 0, TaskIDs: []string{"in-project"}})
+	mustSaveChecklistItem(t, syncer, &things.CheckListItem{UUID: "cli-2", Title: "Step 2", Index: 1, TaskIDs: []string{"in-project"}})
 
 	state := syncer.State()
 
@@ -259,8 +259,8 @@ func TestSearchTasksEscapesLikeWildcards(t *testing.T) {
 	defer syncer.Close()
 
 	opts := QueryOpts{}
-	syncer.saveTask(&things.Task{UUID: "pct", Title: "50% off", Schedule: things.TaskScheduleAnytime, Status: things.TaskStatusPending})
-	syncer.saveTask(&things.Task{UUID: "other", Title: "nothing special", Schedule: things.TaskScheduleAnytime, Status: things.TaskStatusPending})
+	mustSaveTask(t, syncer, &things.Task{UUID: "pct", Title: "50% off", Schedule: things.TaskScheduleAnytime, Status: things.TaskStatusPending})
+	mustSaveTask(t, syncer, &things.Task{UUID: "other", Title: "nothing special", Schedule: things.TaskScheduleAnytime, Status: things.TaskStatusPending})
 
 	state := syncer.State()
 
@@ -326,7 +326,7 @@ func TestProcessTagChecklistTombstone(t *testing.T) {
 	})
 
 	t.Run("checklist item create and delete", func(t *testing.T) {
-		syncer.saveTask(&things.Task{UUID: "parent-task", Title: "Parent"})
+		mustSaveTask(t, syncer, &things.Task{UUID: "parent-task", Title: "Parent"})
 		title := "A step"
 		p, _ := json.Marshal(things.CheckListActionItemPayload{Title: &title, TaskIDs: &[]string{"parent-task"}})
 		changes, err := syncer.processItems([]things.Item{{
@@ -355,7 +355,7 @@ func TestProcessTagChecklistTombstone(t *testing.T) {
 	})
 
 	t.Run("tombstone deletes a task", func(t *testing.T) {
-		syncer.saveTask(&things.Task{UUID: "doomed", Title: "Doomed Task"})
+		mustSaveTask(t, syncer, &things.Task{UUID: "doomed", Title: "Doomed Task"})
 		p, _ := json.Marshal(things.TombstoneActionItemPayload{DeletedObjectID: "doomed"})
 		changes, err := syncer.processItems([]things.Item{{
 			UUID: "tomb-1", Kind: things.ItemKindTombstone, Action: things.ItemActionCreated, P: p,

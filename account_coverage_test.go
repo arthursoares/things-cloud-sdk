@@ -19,11 +19,11 @@ func captureServer(statusCode int, respBody string) (*httptest.Server, *captured
 		cap.Authorization = r.Header.Get("Authorization")
 		bs, _ := io.ReadAll(r.Body)
 		cap.RawBody = string(bs)
-		json.Unmarshal(bs, &cap.Body)
+		_ = json.Unmarshal(bs, &cap.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		if respBody != "" {
-			w.Write([]byte(respBody))
+			_, _ = w.Write([]byte(respBody))
 		}
 	}))
 	return server, cap

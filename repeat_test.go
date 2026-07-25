@@ -69,7 +69,9 @@ func TestRepeaterConfiguration_NewFields(t *testing.T) {
 
 func TestRepeaterConfiguration_IsNeverending(t *testing.T) {
 	ts := &Timestamp{}
-	ts.UnmarshalJSON([]byte(`64092211200`))
+	if err := ts.UnmarshalJSON([]byte(`64092211200`)); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
 	rc := RepeaterConfiguration{LastScheduledAt: ts}
 
 	if !rc.IsNeverending() {

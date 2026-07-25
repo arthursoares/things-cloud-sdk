@@ -64,14 +64,16 @@ func TestTaskStorage(t *testing.T) {
 
 	t.Run("soft delete task", func(t *testing.T) {
 		task := &things.Task{UUID: "to-delete", Title: "Delete Me"}
-		syncer.saveTask(task)
+		mustSaveTask(t, syncer, task)
 
 		if err := syncer.markTaskDeleted("to-delete"); err != nil {
 			t.Fatalf("markTaskDeleted failed: %v", err)
 		}
 
 		var deleted int
-		syncer.db.QueryRow("SELECT deleted FROM tasks WHERE uuid = 'to-delete'").Scan(&deleted)
+		if err := syncer.db.QueryRow("SELECT deleted FROM tasks WHERE uuid = 'to-delete'").Scan(&deleted); err != nil {
+			t.Fatalf("read deleted flag: %v", err)
+		}
 		if deleted != 1 {
 			t.Error("task not marked as deleted")
 		}
@@ -171,7 +173,7 @@ func TestTaskStorage(t *testing.T) {
 
 	t.Run("update existing task", func(t *testing.T) {
 		task := &things.Task{UUID: "task-update", Title: "Original Title"}
-		syncer.saveTask(task)
+		mustSaveTask(t, syncer, task)
 
 		task.Title = "Updated Title"
 		task.Note = "Added notes"
@@ -190,10 +192,10 @@ func TestTaskStorage(t *testing.T) {
 
 	t.Run("update task tags", func(t *testing.T) {
 		task := &things.Task{UUID: "task-tags", Title: "Tagged Task", TagIDs: []string{"old-tag"}}
-		syncer.saveTask(task)
+		mustSaveTask(t, syncer, task)
 
 		task.TagIDs = []string{"new-tag-1", "new-tag-2"}
-		syncer.saveTask(task)
+		mustSaveTask(t, syncer, task)
 
 		retrieved, _ := syncer.getTask("task-tags")
 		if len(retrieved.TagIDs) != 2 {
@@ -244,7 +246,7 @@ func TestAreaStorage(t *testing.T) {
 
 	t.Run("soft delete area", func(t *testing.T) {
 		area := &things.Area{UUID: "area-to-delete", Title: "Delete Me"}
-		syncer.saveArea(area)
+		mustSaveArea(t, syncer, area)
 
 		if err := syncer.markAreaDeleted("area-to-delete"); err != nil {
 			t.Fatalf("markAreaDeleted failed: %v", err)
@@ -258,7 +260,9 @@ func TestAreaStorage(t *testing.T) {
 
 		// But record should still exist in DB
 		var deleted int
-		syncer.db.QueryRow("SELECT deleted FROM areas WHERE uuid = 'area-to-delete'").Scan(&deleted)
+		if err := syncer.db.QueryRow("SELECT deleted FROM areas WHERE uuid = 'area-to-delete'").Scan(&deleted); err != nil {
+			t.Fatalf("read deleted flag: %v", err)
+		}
 		if deleted != 1 {
 			t.Error("area not marked as deleted in database")
 		}
@@ -266,10 +270,10 @@ func TestAreaStorage(t *testing.T) {
 
 	t.Run("update existing area", func(t *testing.T) {
 		area := &things.Area{UUID: "area-update", Title: "Original"}
-		syncer.saveArea(area)
+		mustSaveArea(t, syncer, area)
 
 		area.Title = "Updated"
-		syncer.saveArea(area)
+		mustSaveArea(t, syncer, area)
 
 		retrieved, _ := syncer.getArea("area-update")
 		if retrieved.Title != "Updated" {
@@ -320,10 +324,10 @@ func TestTagStorage(t *testing.T) {
 
 	t.Run("save tag with parent", func(t *testing.T) {
 		parentTag := &things.Tag{UUID: "parent-tag", Title: "Parent"}
-		syncer.saveTag(parentTag)
+		mustSaveTag(t, syncer, parentTag)
 
 		childTag := &things.Tag{UUID: "child-tag", Title: "Child", ParentTagIDs: []string{"parent-tag"}}
-		syncer.saveTag(childTag)
+		mustSaveTag(t, syncer, childTag)
 
 		retrieved, _ := syncer.getTag("child-tag")
 		if len(retrieved.ParentTagIDs) != 1 || retrieved.ParentTagIDs[0] != "parent-tag" {
@@ -333,7 +337,7 @@ func TestTagStorage(t *testing.T) {
 
 	t.Run("soft delete tag", func(t *testing.T) {
 		tag := &things.Tag{UUID: "tag-to-delete", Title: "Delete Me"}
-		syncer.saveTag(tag)
+		mustSaveTag(t, syncer, tag)
 
 		if err := syncer.markTagDeleted("tag-to-delete"); err != nil {
 			t.Fatalf("markTagDeleted failed: %v", err)
@@ -348,11 +352,11 @@ func TestTagStorage(t *testing.T) {
 
 	t.Run("update existing tag", func(t *testing.T) {
 		tag := &things.Tag{UUID: "tag-update", Title: "Original", ShortHand: "o"}
-		syncer.saveTag(tag)
+		mustSaveTag(t, syncer, tag)
 
 		tag.Title = "Updated"
 		tag.ShortHand = "u"
-		syncer.saveTag(tag)
+		mustSaveTag(t, syncer, tag)
 
 		retrieved, _ := syncer.getTag("tag-update")
 		if retrieved.Title != "Updated" {
@@ -429,7 +433,7 @@ func TestChecklistItemStorage(t *testing.T) {
 			CompletionDate: &completedAt,
 		}
 
-		syncer.saveChecklistItem(item)
+		mustSaveChecklistItem(t, syncer, item)
 
 		retrieved, _ := syncer.getChecklistItem("checklist-completed")
 		if retrieved.Status != things.TaskStatusCompleted {
@@ -442,7 +446,7 @@ func TestChecklistItemStorage(t *testing.T) {
 
 	t.Run("soft delete checklist item", func(t *testing.T) {
 		item := &things.CheckListItem{UUID: "checklist-to-delete", Title: "Delete Me"}
-		syncer.saveChecklistItem(item)
+		mustSaveChecklistItem(t, syncer, item)
 
 		if err := syncer.markChecklistItemDeleted("checklist-to-delete"); err != nil {
 			t.Fatalf("markChecklistItemDeleted failed: %v", err)
@@ -457,11 +461,11 @@ func TestChecklistItemStorage(t *testing.T) {
 
 	t.Run("update existing checklist item", func(t *testing.T) {
 		item := &things.CheckListItem{UUID: "checklist-update", Title: "Original", Index: 0}
-		syncer.saveChecklistItem(item)
+		mustSaveChecklistItem(t, syncer, item)
 
 		item.Title = "Updated"
 		item.Index = 5
-		syncer.saveChecklistItem(item)
+		mustSaveChecklistItem(t, syncer, item)
 
 		retrieved, _ := syncer.getChecklistItem("checklist-update")
 		if retrieved.Title != "Updated" {
@@ -513,8 +517,12 @@ func TestSyncStateStorage(t *testing.T) {
 	})
 
 	t.Run("update sync state", func(t *testing.T) {
-		syncer.saveSyncState("history-1", 10)
-		syncer.saveSyncState("history-2", 100)
+		if err := syncer.saveSyncState("history-1", 10); err != nil {
+			t.Fatalf("saveSyncState: %v", err)
+		}
+		if err := syncer.saveSyncState("history-2", 100); err != nil {
+			t.Fatalf("saveSyncState: %v", err)
+		}
 
 		historyID, serverIndex, _ := syncer.getSyncState()
 		if historyID != "history-2" {
@@ -543,15 +551,19 @@ func TestLogChange(t *testing.T) {
 
 		// Verify entry was logged
 		var count int
-		syncer.db.QueryRow("SELECT COUNT(*) FROM change_log WHERE entity_uuid = 'test-task'").Scan(&count)
+		if err := syncer.db.QueryRow("SELECT COUNT(*) FROM change_log WHERE entity_uuid = 'test-task'").Scan(&count); err != nil {
+			t.Fatalf("count change_log entries: %v", err)
+		}
 		if count != 1 {
 			t.Errorf("expected 1 log entry, got %d", count)
 		}
 
 		// Verify fields
 		var changeType, entityType, entityUUID, payload string
-		syncer.db.QueryRow("SELECT change_type, entity_type, entity_uuid, payload FROM change_log WHERE entity_uuid = 'test-task'").
-			Scan(&changeType, &entityType, &entityUUID, &payload)
+		if err := syncer.db.QueryRow("SELECT change_type, entity_type, entity_uuid, payload FROM change_log WHERE entity_uuid = 'test-task'").
+			Scan(&changeType, &entityType, &entityUUID, &payload); err != nil {
+			t.Fatalf("read change_log entry: %v", err)
+		}
 		if changeType != "TaskCreated" {
 			t.Errorf("changeType mismatch: got %q", changeType)
 		}
