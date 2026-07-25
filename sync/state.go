@@ -81,7 +81,7 @@ func (st *State) AllAreas() ([]*things.Area, error) {
 		}
 		areas = append(areas, &a)
 	}
-	return areas, nil
+	return areas, rows.Err()
 }
 
 // AllTags returns all tags
@@ -100,7 +100,7 @@ func (st *State) AllTags() ([]*things.Tag, error) {
 		}
 		tags = append(tags, &t)
 	}
-	return tags, nil
+	return tags, rows.Err()
 }
 
 // TasksInInbox returns tasks in the Inbox
@@ -289,7 +289,7 @@ func (st *State) ChecklistItems(taskUUID string) ([]*things.CheckListItem, error
 		c.TaskIDs = []string{taskUUID}
 		items = append(items, &c)
 	}
-	return items, nil
+	return items, rows.Err()
 }
 
 // Helper methods
