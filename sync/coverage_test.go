@@ -84,7 +84,6 @@ func TestChangeGetters(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.changeType, func(t *testing.T) {
 			t.Parallel()
 			if got := c.change.ChangeType(); got != c.changeType {
