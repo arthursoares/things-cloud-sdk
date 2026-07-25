@@ -5,6 +5,7 @@ linters:
   enable:
     - govet
     - ineffassign
+    - misspell
     - unused
   exclusions:
     generated: disable
