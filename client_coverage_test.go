@@ -24,7 +24,9 @@ func TestClient_do_ConnectionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.do(req); err == nil {
+	resp, err := c.do(req)
+	if err == nil {
+		defer resp.Body.Close()
 		t.Error("expected do() to return a transport error, got nil")
 	}
 }
@@ -37,7 +39,9 @@ func TestClient_do_InvalidEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.do(req); err == nil {
+	resp, err := c.do(req)
+	if err == nil {
+		defer resp.Body.Close()
 		t.Error("expected do() to fail parsing a malformed endpoint, got nil")
 	}
 }

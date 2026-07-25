@@ -51,10 +51,11 @@ func TestClient_UserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resp.Body.Close()
 
 	// Verify User-Agent is the updated value
 	got := capturedHeaders.Get("User-Agent")
