@@ -2,6 +2,7 @@ package sync
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -45,7 +46,7 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 		&t.Index, &t.TodayIndex, &inTrash, &areaUUID, &projectUUID, &headingUUID,
 		&alarmTimeOffset, &recurrenceRule, &deleted,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -214,7 +215,7 @@ func (s *Syncer) getArea(uuid string) (*things.Area, error) {
 
 	var a things.Area
 	err := row.Scan(&a.UUID, &a.Title)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -255,7 +256,7 @@ func (s *Syncer) getTag(uuid string) (*things.Tag, error) {
 	)
 
 	err := row.Scan(&t.UUID, &t.Title, &shortcut, &parentUUID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -310,7 +311,7 @@ func (s *Syncer) getChecklistItem(uuid string) (*things.CheckListItem, error) {
 	)
 
 	err := row.Scan(&c.UUID, &taskUUID, &c.Title, &status, &c.Index, &creationDate, &completionDate)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -371,7 +372,7 @@ func (s *Syncer) getSyncState() (historyID string, serverIndex int, err error) {
 	`)
 
 	err = row.Scan(&historyID, &serverIndex)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}
 	if err != nil {

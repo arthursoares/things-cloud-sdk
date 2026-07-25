@@ -4,6 +4,7 @@ linters:
   default: none
   enable:
     - copyloopvar
+    - errorlint
     - govet
     - ineffassign
     - misspell
