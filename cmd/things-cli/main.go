@@ -657,10 +657,7 @@ func (ctx *cliContext) loadState() *memory.State {
 		startIndex = 0
 	}
 
-	for {
-		if startIndex >= latestServerIndex {
-			break
-		}
+	for startIndex < latestServerIndex {
 		ctx.history.LoadedServerIndex = startIndex
 		items, hasMore, err := ctx.history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
 		if err != nil {

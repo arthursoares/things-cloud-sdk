@@ -77,7 +77,7 @@ func TestState_Update(t *testing.T) {
 			s := NewState()
 			if err := s.Update(things.Item{
 				Action: things.ItemActionCreated,
-				Kind:   things.ItemKindArea,
+				Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 				P:      json.RawMessage(newAreaPayload),
 			}); err != nil {
 				t.Fatal(err.Error())
@@ -143,7 +143,7 @@ func TestState_Update(t *testing.T) {
 			s := NewState()
 			s.Update(things.Item{
 				Action: things.ItemActionCreated,
-				Kind:   things.ItemKindArea,
+				Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 				P:      json.RawMessage(newAreaPayload),
 			}, things.Item{
 				Action: things.ItemActionCreated,
@@ -257,7 +257,7 @@ func TestState_Update(t *testing.T) {
 
 			if err := s.Update(things.Item{
 				Action: things.ItemActionModified,
-				Kind:   things.ItemKindArea,
+				Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 				P:      json.RawMessage(`{"tt": "Modified Area"}`),
 			}); err != nil {
 				t.Fatal(err.Error())
@@ -274,7 +274,7 @@ func TestState_Update(t *testing.T) {
 
 			if err := s.Update(things.Item{
 				Action: things.ItemActionDeleted,
-				Kind:   things.ItemKindArea,
+				Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 				P:      json.RawMessage(`{}`),
 			}); err != nil {
 				t.Fatal(err.Error())

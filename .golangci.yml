@@ -7,6 +7,7 @@ linters:
     - govet
     - ineffassign
     - misspell
+    - staticcheck
     - unused
   exclusions:
     generated: disable

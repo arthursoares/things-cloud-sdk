@@ -10,6 +10,13 @@ import (
 
 // Note: database/sql types are used via the dbExecutor interface defined in sync.go
 
+// itemKindArea2 is things.ItemKindArea. Read paths reference it through this
+// alias so the write-only deprecation is suppressed on one line instead of
+// across a whole switch clause, where it would also hide unrelated findings.
+//
+//nolint:staticcheck // deprecated for writes only; reading Area2 stays supported
+var itemKindArea2 = things.ItemKindArea
+
 // processItems processes a batch of Things Cloud items into semantic changes.
 // The baseIndex is the starting server index for this batch.
 func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, error) {
@@ -75,7 +82,7 @@ func (s *Syncer) processItem(item things.Item, serverIndex int, ts time.Time) ([
 	switch item.Kind {
 	case things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
 		return s.processTaskItem(item, serverIndex, ts)
-	case things.ItemKindArea, things.ItemKindArea3, things.ItemKindAreaPlain:
+	case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 		return s.processAreaItem(item, serverIndex, ts)
 	case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTagPlain:
 		return s.processTagItem(item, serverIndex, ts)
