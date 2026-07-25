@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-func stringVal(str string) *string {
-	return &str
-}
-
 type fakeResponse struct {
 	statusCode int
 	file       string

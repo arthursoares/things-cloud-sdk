@@ -5,6 +5,7 @@ linters:
   enable:
     - govet
     - ineffassign
+    - unused
   exclusions:
     generated: disable
 

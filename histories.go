@@ -97,13 +97,6 @@ func (c *Client) History(id string) (*History, error) {
 	}, nil
 }
 
-type v1historyResponse struct {
-	Key                 string `json:"history-key"`
-	LatestServerIndex   int    `json:"latest-server-index"`
-	IsEmpty             bool   `json:"is-empty"`
-	LatestSchemaVersion int    `json:"latest-schema-version"`
-}
-
 // OwnHistory returns the clients own history
 func (c *Client) OwnHistory() (*History, error) {
 	resp, err := c.Verify()
