@@ -173,6 +173,58 @@ func TestState_LegacyDeletesCanonicalItem(t *testing.T) {
 	})
 }
 
+func TestState_LegacyKindWithCurrentIdentifierIsNotRederived(t *testing.T) {
+	t.Parallel()
+
+	// A legacy-kind item can carry an already-migrated Base58 identifier
+	// (if any kind kept being emitted after its objects moved to current
+	// identifiers). Deriving again would split the object across a phantom
+	// key and the real one.
+	currentID := things.EncodeLegacyIdentifier("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+	currentTagID := things.EncodeLegacyIdentifier("11111111-2222-3333-4444-555555555555")
+	state := NewState()
+	if err := state.Update(
+		things.Item{
+			UUID:   currentID,
+			Kind:   things.ItemKindTask4,
+			Action: things.ItemActionCreated,
+			P:      legacyPayload(t, map[string]any{"tt": "Carried over", "tg": []string{currentTagID}}),
+		},
+		things.Item{
+			UUID:   currentID,
+			Kind:   things.ItemKindTask,
+			Action: things.ItemActionModified,
+			P:      legacyPayload(t, map[string]any{"ss": things.TaskStatusCompleted}),
+		},
+	); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if len(state.Tasks) != 1 {
+		t.Fatalf("got %d tasks, want 1: legacy-kind item with current identifier must not fork", len(state.Tasks))
+	}
+	task := state.Tasks[currentID]
+	if task == nil {
+		t.Fatalf("task not found under its current identifier %q", currentID)
+	}
+	if task.Title != "Carried over" || task.Status != things.TaskStatusCompleted {
+		t.Errorf("task = title %q, status %v; legacy and current events did not merge", task.Title, task.Status)
+	}
+	assertIDs(t, "tags", task.TagIDs, currentTagID)
+
+	if err := state.Update(things.Item{
+		UUID:   "FFFFFFFF-1111-2222-3333-444444444444",
+		Kind:   things.ItemKindTombstonePlain,
+		Action: things.ItemActionCreated,
+		P:      legacyPayload(t, map[string]any{"dloid": currentID, "dld": 1}),
+	}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if _, ok := state.Tasks[currentID]; ok {
+		t.Errorf("legacy tombstone with current dloid did not delete the task")
+	}
+}
+
 func TestState_AllLegacyKindsUseMigratedKeys(t *testing.T) {
 	t.Parallel()
 

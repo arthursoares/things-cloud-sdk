@@ -555,7 +555,11 @@ func loadCLIStateCache(path string) (*cliStateCache, error) {
 	}
 	var cache cliStateCache
 	if err := json.Unmarshal(bs, &cache); err != nil {
-		return nil, err
+		// The cache is purely derived data: a malformed file (format drift,
+		// partial write) degrades to a full replay, same as a version
+		// mismatch, instead of an error the user can only clear by deleting
+		// the file by hand.
+		return nil, nil
 	}
 	if cache.Version != cliStateCacheVersion {
 		return nil, nil

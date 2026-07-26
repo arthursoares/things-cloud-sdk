@@ -201,7 +201,7 @@ func TestState_Update(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err.Error())
 			}
-			if s.CheckListItems[things.EncodeLegacyIdentifier("")].Title != "Modified Title" {
+			if s.CheckListItems[""].Title != "Modified Title" {
 				t.Fatal("Expected title to be updated")
 			}
 		})
@@ -231,7 +231,7 @@ func TestState_Update(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err.Error())
 			}
-			if s.Tags[things.EncodeLegacyIdentifier("")].Title != "Modified Tag" {
+			if s.Tags[""].Title != "Modified Tag" {
 				t.Fatal("Expected title to be updated")
 			}
 		})
@@ -263,7 +263,7 @@ func TestState_Update(t *testing.T) {
 				t.Fatal(err.Error())
 			}
 
-			if s.Areas[things.EncodeLegacyIdentifier("")].Title != "Modified Area" {
+			if s.Areas[""].Title != "Modified Area" {
 				t.Fatal("Expected title to be updated")
 			}
 		})

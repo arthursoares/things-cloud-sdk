@@ -318,6 +318,21 @@ func TestCLIStateCacheRejectsOldVersion(t *testing.T) {
 	}
 }
 
+func TestCLIStateCacheMalformedFileTreatedAsNoCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte(`{"historyId":"history-1",`), 0o600); err != nil {
+		t.Fatalf("writing malformed cache: %v", err)
+	}
+
+	cache, err := loadCLIStateCache(path)
+	if err != nil {
+		t.Fatalf("loadCLIStateCache failed: %v", err)
+	}
+	if cache != nil {
+		t.Fatalf("malformed cache was accepted: %#v", cache)
+	}
+}
+
 func testStateForListFilters() *memory.State {
 	state := memory.NewState()
 	today := time.Now().UTC()

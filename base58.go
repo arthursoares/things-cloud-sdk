@@ -57,7 +57,13 @@ func EncodeUUID(u uuid.UUID) string {
 // Recurring-task instances use composite identifiers of the form
 // <uuid>-YYYYMMDD and hash in two steps: first the <uuid> prefix alone,
 // then its raw 16-byte digest followed by the "-YYYYMMDD" text.
+//
+// The empty string is returned unchanged: a malformed item should keep an
+// obviously-bogus key rather than gain a plausible-looking derived one.
 func EncodeLegacyIdentifier(legacyID string) string {
+	if legacyID == "" {
+		return ""
+	}
 	input := []byte(legacyID)
 	if prefix, suffix, ok := splitLegacyRecurrenceIdentifier(legacyID); ok {
 		prefixSum := sha1.Sum([]byte(prefix))

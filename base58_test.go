@@ -88,6 +88,39 @@ func TestEncodeLegacyIdentifier_MalformedRecurrenceSuffixes(t *testing.T) {
 	}
 }
 
+func TestEncodeLegacyIdentifier_LeadingZeroClasses(t *testing.T) {
+	t.Parallel()
+
+	// Derived identifiers are 21 or 22 characters depending on leading zero
+	// bytes in the truncated digest; roughly 3% land at 21 characters and
+	// some start with '1'. These are exactly the classes behind the
+	// leading-zero corruption documented in docs/client-side-bugs.md, so pin
+	// one exact vector for each.
+	tests := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"21-character result", "00000006-1111-2222-3333-000000000006", "fxsSvCT97pJn3XZ4wp5t4"},
+		{"leading-1 result", "000000B4-1111-2222-3333-0000000000B4", "14q4keicwiREVK8EKAuowZ"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EncodeLegacyIdentifier(test.id); got != test.want {
+				t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", test.id, got, test.want)
+			}
+		})
+	}
+}
+
+func TestEncodeLegacyIdentifier_Empty(t *testing.T) {
+	t.Parallel()
+
+	if got := EncodeLegacyIdentifier(""); got != "" {
+		t.Errorf("EncodeLegacyIdentifier(\"\") = %q, want empty string passed through", got)
+	}
+}
+
 func TestEncodeDecodeUUID_RoundTrip(t *testing.T) {
 	t.Parallel()
 
