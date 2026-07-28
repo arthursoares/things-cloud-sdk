@@ -1,6 +1,7 @@
 package thingscloud
 
 import (
+	"crypto/sha1"
 	"strings"
 	"testing"
 
@@ -30,6 +31,93 @@ func TestEncodeUUID_AllZero(t *testing.T) {
 	want := "1111111111111111" // one '1' per zero byte
 	if got != want {
 		t.Errorf("EncodeUUID(zero) = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeLegacyIdentifier(t *testing.T) {
+	t.Parallel()
+
+	const legacyID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+	const want = "LXmxn9gakySzcEjKj1DtgD"
+	if got := EncodeLegacyIdentifier(legacyID); got != want {
+		t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", legacyID, got, want)
+	}
+	if got := EncodeLegacyIdentifier(strings.ToLower(legacyID)); got == want {
+		t.Errorf("EncodeLegacyIdentifier normalized identifier case; input must be hashed exactly as stored")
+	}
+}
+
+func TestEncodeLegacyIdentifier_RecurrenceInstance(t *testing.T) {
+	t.Parallel()
+
+	const legacyID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-20240131"
+	const want = "H8Xu72gj7fooPuYoBMZ5TK"
+	if got := EncodeLegacyIdentifier(legacyID); got != want {
+		t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", legacyID, got, want)
+	}
+	if got := EncodeLegacyIdentifier(strings.ToLower(legacyID)); got == want {
+		t.Errorf("EncodeLegacyIdentifier normalized recurrence identifier case; input must be hashed exactly as stored")
+	}
+}
+
+func TestEncodeLegacyIdentifier_MalformedRecurrenceSuffixes(t *testing.T) {
+	t.Parallel()
+
+	// Near misses of the <uuid>-YYYYMMDD form must hash as ordinary
+	// identifier text, never through the recurrence formula.
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"non-digit in date", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-2024013X"},
+		{"date too short", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-2024013"},
+		{"date too long", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE-202401310"},
+		{"invalid uuid prefix", "GGGGGGGG-BBBB-CCCC-DDDD-EEEEEEEEEEEE-20240131"},
+		{"missing date separator", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE920240131"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sum := sha1.Sum([]byte(test.id))
+			var u uuid.UUID
+			copy(u[:], sum[:len(u)])
+			want := EncodeUUID(u)
+			if got := EncodeLegacyIdentifier(test.id); got != want {
+				t.Errorf("EncodeLegacyIdentifier(%q) = %q, want ordinary derivation %q", test.id, got, want)
+			}
+		})
+	}
+}
+
+func TestEncodeLegacyIdentifier_LeadingZeroClasses(t *testing.T) {
+	t.Parallel()
+
+	// Derived identifiers are 21 or 22 characters depending on leading zero
+	// bytes in the truncated digest; roughly 3% land at 21 characters and
+	// some start with '1'. These are exactly the classes behind the
+	// leading-zero corruption documented in docs/client-side-bugs.md, so pin
+	// one exact vector for each.
+	tests := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"21-character result", "00000006-1111-2222-3333-000000000006", "fxsSvCT97pJn3XZ4wp5t4"},
+		{"leading-1 result", "000000B4-1111-2222-3333-0000000000B4", "14q4keicwiREVK8EKAuowZ"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EncodeLegacyIdentifier(test.id); got != test.want {
+				t.Errorf("EncodeLegacyIdentifier(%q) = %q, want %q", test.id, got, test.want)
+			}
+		})
+	}
+}
+
+func TestEncodeLegacyIdentifier_Empty(t *testing.T) {
+	t.Parallel()
+
+	if got := EncodeLegacyIdentifier(""); got != "" {
+		t.Errorf("EncodeLegacyIdentifier(\"\") = %q, want empty string passed through", got)
 	}
 }
 
