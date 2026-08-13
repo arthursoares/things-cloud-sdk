@@ -8,6 +8,13 @@ import (
 	things "github.com/arthursoares/things-cloud-sdk"
 )
 
+// itemKindArea2 is things.ItemKindArea. Read paths reference it through this
+// alias so the write-only deprecation is suppressed on one line instead of
+// across a whole switch clause, where it would also hide unrelated findings.
+//
+//nolint:staticcheck // deprecated for writes only; reading Area2 stays supported
+var itemKindArea2 = things.ItemKindArea
+
 // State is created by applying all history items in order.
 // Note that the hierarchy within the state (e.g. area > tasks > tasks > check list items)
 // is modelled with pointers between the different maps, so concurrent modification
@@ -39,7 +46,7 @@ func isLegacyItemKind(kind things.ItemKind) bool {
 	switch kind {
 	case things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain,
 		things.ItemKindChecklistItem, things.ItemKindChecklistItem2,
-		things.ItemKindArea, things.ItemKindAreaPlain,
+		itemKindArea2, things.ItemKindAreaPlain,
 		things.ItemKindTag, things.ItemKindTagPlain,
 		things.ItemKindTombstonePlain:
 		return true
@@ -300,7 +307,7 @@ func (s *State) Update(items ...things.Item) error {
 				// Unsupported action: skip
 			}
 
-		case things.ItemKindArea, things.ItemKindArea3, things.ItemKindAreaPlain:
+		case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 			item := things.AreaActionItem{Item: rawItem}
 			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
 				continue // Skip unparseable items

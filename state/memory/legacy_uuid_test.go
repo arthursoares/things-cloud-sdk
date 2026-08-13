@@ -37,7 +37,7 @@ func TestState_LegacyUUIDRemapping(t *testing.T) {
 	err := state.Update(
 		things.Item{
 			UUID:   legacyAreaID,
-			Kind:   things.ItemKindArea,
+			Kind:   things.ItemKindArea, //nolint:staticcheck // reading legacy Area2 items stays supported
 			Action: things.ItemActionCreated,
 			P:      legacyPayload(t, map[string]any{"tt": "Context"}),
 		},
@@ -240,7 +240,7 @@ func TestState_AllLegacyKindsUseMigratedKeys(t *testing.T) {
 		{"Task", things.ItemKindTaskPlain, func(s *State, id string) bool { return s.Tasks[id] != nil }},
 		{"ChecklistItem2", things.ItemKindChecklistItem2, func(s *State, id string) bool { return s.CheckListItems[id] != nil }},
 		{"ChecklistItem", things.ItemKindChecklistItem, func(s *State, id string) bool { return s.CheckListItems[id] != nil }},
-		{"Area2", things.ItemKindArea, func(s *State, id string) bool { return s.Areas[id] != nil }},
+		{"Area2", things.ItemKindArea, func(s *State, id string) bool { return s.Areas[id] != nil }}, //nolint:staticcheck // reading legacy Area2 items stays supported
 		{"Area", things.ItemKindAreaPlain, func(s *State, id string) bool { return s.Areas[id] != nil }},
 		{"Tag3", things.ItemKindTag, func(s *State, id string) bool { return s.Tags[id] != nil }},
 		{"Tag", things.ItemKindTagPlain, func(s *State, id string) bool { return s.Tags[id] != nil }},

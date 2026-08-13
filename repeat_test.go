@@ -31,15 +31,15 @@ var (
 	rcLastMondayEvery2ndMonth      = []byte(`{"ia":1506297600,"rrv":4,"tp":0,"of":[{"wdo":-1,"wd":1}],"fu":8,"sr":1504137600,"fa":2,"rc":0,"ts":0,"ed":64092211200}`)
 	rcFirstMondayEvery2ndMonth     = []byte(`{"ia":1502064000,"rrv":4,"tp":0,"of":[{"wdo":1,"wd":1}],"fu":8,"sr":1509321600,"fa":2,"rc":0,"ts":0,"ed":64092211200}`)
 
-	rc1stDayJanuaryEveryYear                     = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0}],"fu":4,"sr":1512345600,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rcLastDayJanuaryEveryYear                    = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1514764800,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rcLastDayJanuaryEveryYearEndDate             = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1499472000,"fa":1,"rc":0,"ts":0,"ed":1551225600}`)
-	rcLastDayJanuaryEveryYearEndRepeat           = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1517356800,"fa":1,"rc":2,"ts":0}`)
-	rcLastDayFebuaryEveryYear                    = []byte(`{"ia":1519776000,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":1}],"fu":4,"sr":1517443200,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rc1stAndLastDayFebuaryEveryYear              = []byte(`{"ia":1517443200,"rrv":4,"tp":0,"of":[{"dy":0,"mo":1},{"dy":-1,"mo":1}],"fu":4,"sr":1499472000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rc1stJanuaryAnd1stMarchEveryYear             = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0},{"dy":0,"mo":2}],"fu":4,"sr":1504224000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rc1stJanuaryAndLastWednesdayFebuaryEveryYear = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0},{"wdo":-1,"wd":3,"mo":1}],"fu":4,"sr":1514764800,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
-	rcLastWednesdayFebuaryEveryYear              = []byte(`{"ia":1519776000,"rrv":4,"tp":0,"of":[{"wdo":-1,"wd":3,"mo":1}],"fu":4,"sr":1519776000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rc1stDayJanuaryEveryYear                      = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0}],"fu":4,"sr":1512345600,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rcLastDayJanuaryEveryYear                     = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1514764800,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rcLastDayJanuaryEveryYearEndDate              = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1499472000,"fa":1,"rc":0,"ts":0,"ed":1551225600}`)
+	rcLastDayJanuaryEveryYearEndRepeat            = []byte(`{"ia":1517356800,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":0}],"fu":4,"sr":1517356800,"fa":1,"rc":2,"ts":0}`)
+	rcLastDayFebruaryEveryYear                    = []byte(`{"ia":1519776000,"rrv":4,"tp":0,"of":[{"dy":-1,"mo":1}],"fu":4,"sr":1517443200,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rc1stAndLastDayFebruaryEveryYear              = []byte(`{"ia":1517443200,"rrv":4,"tp":0,"of":[{"dy":0,"mo":1},{"dy":-1,"mo":1}],"fu":4,"sr":1499472000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rc1stJanuaryAnd1stMarchEveryYear              = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0},{"dy":0,"mo":2}],"fu":4,"sr":1504224000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rc1stJanuaryAndLastWednesdayFebruaryEveryYear = []byte(`{"ia":1514764800,"rrv":4,"tp":0,"of":[{"dy":0,"mo":0},{"wdo":-1,"wd":3,"mo":1}],"fu":4,"sr":1514764800,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
+	rcLastWednesdayFebruaryEveryYear              = []byte(`{"ia":1519776000,"rrv":4,"tp":0,"of":[{"wdo":-1,"wd":3,"mo":1}],"fu":4,"sr":1519776000,"fa":1,"rc":0,"ts":0,"ed":64092211200}`)
 )
 
 func TestRepeaterConfiguration_NewFields(t *testing.T) {
@@ -69,7 +69,9 @@ func TestRepeaterConfiguration_NewFields(t *testing.T) {
 
 func TestRepeaterConfiguration_IsNeverending(t *testing.T) {
 	ts := &Timestamp{}
-	ts.UnmarshalJSON([]byte(`64092211200`))
+	if err := ts.UnmarshalJSON([]byte(`64092211200`)); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
 	rc := RepeaterConfiguration{LastScheduledAt: ts}
 
 	if !rc.IsNeverending() {
@@ -253,10 +255,10 @@ func TestRepeaterConfiguration_ComputeFirstScheduledAt(t *testing.T) {
 		{"Every 1st and last day every month", rc1stAndLastDayEveryMonth, "2017-08-31", "2017-08-31"},
 		{"Every 1st and last day every month", rc1stAndLastDayEveryMonth, "2017-09-01", "2017-09-01"},
 
-		{"Every 1st January and last Wednesday of Febuary every year", rc1stJanuaryAndLastWednesdayFebuaryEveryYear, "2017-12-22", "2018-01-01"},
-		{"Every 1st January and last Wednesday of Febuary every year 1st", rc1stJanuaryAndLastWednesdayFebuaryEveryYear, "2018-01-01", "2018-01-01"},
-		{"Every 1st January and last Wednesday of Febuary every year last", rc1stJanuaryAndLastWednesdayFebuaryEveryYear, "2018-01-02", "2018-02-28"},
-		{"Every 1st January and last Wednesday of Febuary every year last", rc1stJanuaryAndLastWednesdayFebuaryEveryYear, "2018-03-02", "2019-01-01"},
+		{"Every 1st January and last Wednesday of February every year", rc1stJanuaryAndLastWednesdayFebruaryEveryYear, "2017-12-22", "2018-01-01"},
+		{"Every 1st January and last Wednesday of February every year 1st", rc1stJanuaryAndLastWednesdayFebruaryEveryYear, "2018-01-01", "2018-01-01"},
+		{"Every 1st January and last Wednesday of February every year last", rc1stJanuaryAndLastWednesdayFebruaryEveryYear, "2018-01-02", "2018-02-28"},
+		{"Every 1st January and last Wednesday of February every year last", rc1stJanuaryAndLastWednesdayFebruaryEveryYear, "2018-03-02", "2019-01-01"},
 	}
 	for _, testCase := range testCases {
 		t.Run(fmt.Sprintf("testCase %q", testCase.Title), func(t *testing.T) {
@@ -306,11 +308,11 @@ func TestRepeaterConfiguration_NextScheduledAt(t *testing.T) {
 
 		{"Every first day of january of every year", rc1stDayJanuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-01-01", "2019-01-01", "2020-01-01"}},
 		{"Every last day of january of every year", rcLastDayJanuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-01-31", "2019-01-31", "2020-01-31"}},
-		{"Every last day of february of every year", rcLastDayFebuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-28", "2019-02-28", "2020-02-29", "2021-02-28"}},
-		{"Every first and last day of february of every year", rc1stAndLastDayFebuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-01", "2018-02-28", "2019-02-01", "2019-02-28"}},
+		{"Every last day of february of every year", rcLastDayFebruaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-28", "2019-02-28", "2020-02-29", "2021-02-28"}},
+		{"Every first and last day of february of every year", rc1stAndLastDayFebruaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-01", "2018-02-28", "2019-02-01", "2019-02-28"}},
 		{"Every first day of january and first day of march of every year", rc1stJanuaryAnd1stMarchEveryYear, FrequencyUnitYearly, 1, []string{"2018-01-01", "2018-03-01", "2019-01-01", "2019-03-01"}},
-		{"Every first day of january and last Wednesday of febuary of every year", rc1stJanuaryAndLastWednesdayFebuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-01-01", "2018-02-28", "2019-01-01", "2019-02-27", "2020-01-01", "2020-02-26"}},
-		{"Every last Wednesday of febuary of every year", rcLastWednesdayFebuaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-28", "2019-02-27", "2020-02-26", "2021-02-24", "2022-02-23"}},
+		{"Every first day of january and last Wednesday of february of every year", rc1stJanuaryAndLastWednesdayFebruaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-01-01", "2018-02-28", "2019-01-01", "2019-02-27", "2020-01-01", "2020-02-26"}},
+		{"Every last Wednesday of february of every year", rcLastWednesdayFebruaryEveryYear, FrequencyUnitYearly, 1, []string{"2018-02-28", "2019-02-27", "2020-02-26", "2021-02-24", "2022-02-23"}},
 	}
 	for _, testCase := range testCases {
 		t.Run(fmt.Sprintf("testCase %q", testCase.Title), func(t *testing.T) {

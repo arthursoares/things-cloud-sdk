@@ -45,7 +45,10 @@ func main() {
 	}
 
 	state := memory.NewState()
-	state.Update(allItems...)
+	if err := state.Update(allItems...); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed updating state: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("=== STATE SUMMARY ===\n")
 	fmt.Printf("Areas: %d\n", len(state.Areas))

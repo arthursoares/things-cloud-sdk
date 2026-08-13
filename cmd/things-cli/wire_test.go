@@ -541,7 +541,7 @@ func TestCmdBatchWire(t *testing.T) {
 	origStdin := os.Stdin
 	os.Stdin = r
 	t.Cleanup(func() { os.Stdin = origStdin })
-	go func() { w.WriteString(ops); w.Close() }()
+	go func() { _, _ = w.WriteString(ops); w.Close() }()
 
 	cmdBatch(h)
 

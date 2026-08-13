@@ -245,7 +245,9 @@ func requireEnv(key string) string {
 func outputJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		fatal("write output", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -657,10 +659,7 @@ func (ctx *cliContext) loadState() *memory.State {
 		startIndex = 0
 	}
 
-	for {
-		if startIndex >= latestServerIndex {
-			break
-		}
+	for startIndex < latestServerIndex {
 		ctx.history.LoadedServerIndex = startIndex
 		items, hasMore, err := ctx.history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
 		if err != nil {

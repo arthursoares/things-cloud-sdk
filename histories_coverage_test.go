@@ -45,7 +45,7 @@ func TestClient_History(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "")
-		if _, err := c.History("id"); err != ErrUnauthorized {
+		if _, err := c.History("id"); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("History err = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -165,7 +165,7 @@ func TestClient_CreateHistory_Unauthorized(t *testing.T) {
 	defer server.Close()
 
 	c := New(server.URL, "martin@example.com", "")
-	if _, err := c.CreateHistory(); err != ErrUnauthorized {
+	if _, err := c.CreateHistory(); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("CreateHistory err = %v, want ErrUnauthorized", err)
 	}
 }
@@ -176,7 +176,7 @@ func TestClient_Histories_Unauthorized(t *testing.T) {
 	defer server.Close()
 
 	c := New(server.URL, "martin@example.com", "")
-	if _, err := c.Histories(); err != ErrUnauthorized {
+	if _, err := c.Histories(); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("Histories err = %v, want ErrUnauthorized", err)
 	}
 }

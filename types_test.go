@@ -73,7 +73,9 @@ func TestTaskType_JSONRoundTrip(t *testing.T) {
 		t.Errorf("expected {\"tp\":2}, got %s", string(bs))
 	}
 	var w2 wrapper
-	json.Unmarshal(bs, &w2)
+	if err := json.Unmarshal(bs, &w2); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
 	if *w2.TP != TaskTypeHeading {
 		t.Errorf("expected TaskTypeHeading, got %d", *w2.TP)
 	}

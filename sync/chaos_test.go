@@ -150,6 +150,9 @@ func changeLogFingerprint(t *testing.T, dbPath string) (fingerprint string, dupl
 		}
 		lines = append(lines, fmt.Sprintf("%d|%s|%s", idx, uuid, ctype))
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate change_log: %v", err)
+	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n"), duplicates
 }
@@ -173,6 +176,9 @@ func taskStateFingerprint(t *testing.T, dbPath string) string {
 			t.Fatalf("scan: %v", err)
 		}
 		lines = append(lines, fmt.Sprintf("%s|%s|%d|%d", uuid, title, status, deleted))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate tasks: %v", err)
 	}
 	return strings.Join(lines, "\n")
 }

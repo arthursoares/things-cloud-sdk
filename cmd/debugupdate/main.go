@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -12,21 +12,29 @@ import (
 
 func main() {
 	c := thingscloud.New(thingscloud.APIEndpoint, os.Getenv("THINGS_USERNAME"), os.Getenv("THINGS_PASSWORD"))
-	c.Verify()
-	history, _ := c.OwnHistory()
-	history.Sync()
+	if _, err := c.Verify(); err != nil {
+		log.Fatalf("verify: %v", err)
+	}
+	history, err := c.OwnHistory()
+	if err != nil {
+		log.Fatalf("own history: %v", err)
+	}
+	if err := history.Sync(); err != nil {
+		log.Fatalf("sync: %v", err)
+	}
 
 	state := memory.NewState()
 	target := "2MNjM5gT"
 
 	startIndex := 0
 	for {
-		items, hasMore, _ := history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
+		items, hasMore, err := history.Items(thingscloud.ItemsOptions{StartIndex: startIndex})
+		if err != nil {
+			log.Fatalf("read items: %v", err)
+		}
 
 		for _, item := range items {
 			if strings.HasPrefix(item.UUID, target) {
-				var p map[string]interface{}
-				json.Unmarshal(item.P, &p)
 				fmt.Printf("Processing: UUID=%s Kind=%s Action=%d\n", item.UUID, item.Kind, item.Action)
 
 				// Try updating just this one item

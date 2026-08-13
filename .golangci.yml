@@ -1,15 +1,17 @@
 version: "2"
 
 linters:
-  default: none
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - rowserrcheck
   exclusions:
-    generated: disable
+    presets:
+      - std-error-handling
 
 formatters:
   enable:
     - gofmt
-  settings:
-    gofmt:
-      simplify: false
-  exclusions:
-    generated: disable

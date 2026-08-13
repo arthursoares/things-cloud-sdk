@@ -74,7 +74,6 @@ func TestFilterChanges(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := FilterChanges(tt.input, tt.changeType)
@@ -128,7 +127,6 @@ func TestFilterChangesPrefix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := FilterChangesPrefix(tt.input, tt.prefix)
@@ -180,7 +178,6 @@ func TestDaysSinceCreated(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := DaysSinceCreated(tt.input)
@@ -219,7 +216,6 @@ func TestCountMoves(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := CountMoves(tt.input)
@@ -261,7 +257,6 @@ func TestTaskAge(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := TaskAge(tt.task)
