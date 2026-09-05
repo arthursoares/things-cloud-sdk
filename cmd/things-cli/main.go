@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -140,18 +141,46 @@ func generateUUID() string {
 // identifier. Invalid identifiers written to the cloud poison the sync
 // history irreparably, so they must be rejected before any write.
 func validateIdentifierOpts(opts map[string]string) error {
-	for _, key := range []string{"uuid", "project", "heading", "area"} {
-		if v, ok := opts[key]; ok && v != "" {
+	for _, key := range []string{"uuid", "project", "heading", "area", "parent"} {
+		if v, ok := opts[key]; ok {
 			if err := thingscloud.ValidateUUID(v); err != nil {
 				return fmt.Errorf("--%s: %w", key, err)
 			}
 		}
 	}
-	if v, ok := opts["tags"]; ok && v != "" {
+	if v, ok := opts["tags"]; ok {
 		for _, tag := range strings.Split(v, ",") {
-			if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+			if err := thingscloud.ValidateUUID(tag); err != nil {
 				return fmt.Errorf("--tags: %w", err)
 			}
+		}
+	}
+	return nil
+}
+
+// validateTaskOpts runs before building a task payload so unsupported values
+// cannot silently fall back to a default or omit a requested update.
+func validateTaskOpts(opts map[string]string) error {
+	if err := validateIdentifierOpts(opts); err != nil {
+		return err
+	}
+	if v, ok := opts["when"]; ok {
+		switch v {
+		case "today", "anytime", "someday", "inbox":
+		default:
+			return fmt.Errorf("--when: %q is invalid; expected today, anytime, someday, or inbox", v)
+		}
+	}
+	if v, ok := opts["type"]; ok {
+		switch v {
+		case "task", "project", "heading":
+		default:
+			return fmt.Errorf("--type: %q is invalid; expected task, project, or heading", v)
+		}
+	}
+	for _, key := range []string{"deadline", "scheduled"} {
+		if v, ok := opts[key]; ok && parseDate(v) == nil {
+			return fmt.Errorf("--%s: %q is invalid; expected a calendar date in YYYY-MM-DD format", key, v)
 		}
 	}
 	return nil
@@ -172,7 +201,7 @@ func validateBatchOpIdentifiers(op BatchOp) error {
 		}
 	}
 	for _, tag := range op.Tags {
-		if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+		if err := thingscloud.ValidateUUID(tag); err != nil {
 			return fmt.Errorf("tags: %w", err)
 		}
 	}
@@ -931,7 +960,7 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
-	if err := validateIdentifierOpts(opts); err != nil {
+	if err := validateTaskOpts(opts); err != nil {
 		fatal("create task", err)
 	}
 
@@ -974,7 +1003,7 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
 		fatal("edit", err)
 	}
-	if err := validateIdentifierOpts(opts); err != nil {
+	if err := validateTaskOpts(opts); err != nil {
 		fatal("edit", err)
 	}
 
@@ -1073,6 +1102,9 @@ func cmdTrash(history *thingscloud.History, taskUUID string) {
 }
 
 func cmdPurge(history *thingscloud.History, taskUUID string) {
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("purge uuid", err)
+	}
 	tombstoneUUID := generateUUID()
 	payload := map[string]any{
 		"dloid": taskUUID,
@@ -1103,6 +1135,9 @@ func cmdCreateArea(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create area", err)
+	}
 
 	areaUUID := opts["uuid"]
 	if areaUUID == "" {
@@ -1134,6 +1169,9 @@ func cmdCreateTag(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create tag", err)
+	}
 
 	tagUUID := opts["uuid"]
 	if tagUUID == "" {
@@ -1184,14 +1222,20 @@ type BatchOp struct {
 	Heading  string            `json:"heading,omitempty"`
 	Tags     []string          `json:"tags,omitempty"`
 	Type     string            `json:"type,omitempty"`
-	Extra    map[string]string `json:"extra,omitempty"` // for any additional opts
+	Extra    map[string]string `json:"extra,omitempty"` // supported create options; overrides top-level values
 }
 
 func cmdBatch(history *thingscloud.History) {
 	// Read JSON from stdin
 	var ops []BatchOp
-	if err := json.NewDecoder(os.Stdin).Decode(&ops); err != nil {
+	decoder := json.NewDecoder(os.Stdin)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&ops); err != nil {
 		fatalf("parsing batch JSON: %v", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fatalf("parsing batch JSON: expected a single array with no trailing input")
 	}
 
 	if len(ops) == 0 {
@@ -1224,6 +1268,9 @@ func cmdBatch(history *thingscloud.History) {
 }
 
 func buildBatchEnvelope(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
+	if op.Cmd != "create" && op.Extra != nil {
+		return nil, nil, fmt.Errorf("extra options are only supported for create")
+	}
 	switch op.Cmd {
 	case "create":
 		return buildBatchCreate(op)
@@ -1286,7 +1333,15 @@ func buildBatchCreate(op BatchOp) (thingscloud.Identifiable, map[string]string, 
 		opts["type"] = op.Type
 	}
 	for k, v := range op.Extra {
-		opts[k] = v
+		switch k {
+		case "note", "when", "deadline", "scheduled", "project", "area", "heading", "tags", "type":
+			opts[k] = v
+		default:
+			return nil, nil, fmt.Errorf("unsupported create extra option: %s", k)
+		}
+	}
+	if err := validateTaskOpts(opts); err != nil {
+		return nil, nil, err
 	}
 
 	payload := newTaskCreatePayload(op.Title, opts)
@@ -1321,6 +1376,9 @@ func buildBatchTrash(op BatchOp) (thingscloud.Identifiable, map[string]string, e
 func buildBatchPurge(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
 	if op.UUID == "" {
 		return nil, nil, fmt.Errorf("purge requires uuid")
+	}
+	if err := thingscloud.ValidateUUID(op.UUID); err != nil {
+		return nil, nil, fmt.Errorf("uuid: %w", err)
 	}
 
 	tombstoneUUID := generateUUID()
@@ -1383,6 +1441,16 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 		return nil, nil, fmt.Errorf("edit requires uuid")
 	}
 	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
+	opts := make(map[string]string)
+	if op.When != "" {
+		opts["when"] = op.When
+	}
+	if op.Deadline != "" {
+		opts["deadline"] = op.Deadline
+	}
+	if err := validateTaskOpts(opts); err != nil {
 		return nil, nil, err
 	}
 
@@ -1481,7 +1549,7 @@ Write commands (fast — skip state loading):
 Batch command (reads JSON from stdin, sends all ops in one HTTP request):
   batch
 
-  Example: echo '[{"cmd":"complete","uuid":"abc"},{"cmd":"trash","uuid":"def"}]' | things-cli batch
+  Example: echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":"VJ1edXTP9q3PmFDUuy8EQh"}]' | things-cli batch
 
   Supported operations:
     {"cmd": "create", "title": "...", "note": "...", "when": "today|anytime|someday|inbox",
