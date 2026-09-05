@@ -256,7 +256,31 @@ func (s *State) updateTag(item things.TagActionItem) *things.Tag {
 
 // Update applies all items to update the aggregated state
 func (s *State) Update(items ...things.Item) error {
-	for _, rawItem := range items {
+	if err := things.ValidateTaskReadKinds(items); err != nil {
+		return err
+	}
+
+	// Decode every task create/modify before applying any item. A malformed
+	// task payload late in the batch must not leave earlier mutations behind,
+	// especially note deltas that would be applied twice on retry.
+	taskPayloads := make([]things.TaskReadPayload, len(items))
+	decodedTaskPayload := make([]bool, len(items))
+	for i, rawItem := range items {
+		switch rawItem.Kind {
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+			if rawItem.Action != things.ItemActionCreated && rawItem.Action != things.ItemActionModified {
+				continue
+			}
+			payload, err := things.DecodeTaskReadPayload(rawItem.P)
+			if err != nil {
+				return err
+			}
+			taskPayloads[i] = payload
+			decodedTaskPayload[i] = true
+		}
+	}
+
+	for i, rawItem := range items {
 		legacy := isLegacyItemKind(rawItem.Kind)
 		// A legacy-kind item whose key already parses as canonical Base58
 		// carries a current-generation identifier and must not be re-derived
@@ -267,10 +291,12 @@ func (s *State) Update(items ...things.Item) error {
 		}
 
 		switch rawItem.Kind {
-		case things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
 			item := things.TaskActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip items that can't be parsed
+			var payload things.TaskReadPayload
+			if decodedTaskPayload[i] {
+				payload = taskPayloads[i]
+				item.P = payload.TaskActionItemPayload
 			}
 			if legacy {
 				encodeLegacyTaskReferences(&item.P)
@@ -280,7 +306,9 @@ func (s *State) Update(items ...things.Item) error {
 			case things.ItemActionCreated:
 				fallthrough
 			case things.ItemActionModified:
-				s.Tasks[item.UUID()] = s.updateTask(item)
+				task := s.updateTask(item)
+				payload.ApplyNulls(task)
+				s.Tasks[item.UUID()] = task
 			case things.ItemActionDeleted:
 				delete(s.Tasks, item.UUID())
 			default:

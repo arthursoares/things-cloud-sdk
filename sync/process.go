@@ -20,8 +20,8 @@ var itemKindArea2 = things.ItemKindArea
 // processItems processes a batch of Things Cloud items into semantic changes.
 // The baseIndex is the starting server index for this batch.
 func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, error) {
-	if len(items) == 0 {
-		return nil, nil
+	if err := things.ValidateTaskReadKinds(items); err != nil {
+		return nil, err
 	}
 
 	// Wrap entire batch in a transaction for massive performance improvement
@@ -47,7 +47,12 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 
 		changes, err := s.processItem(item, serverIndex, ts)
 		if err != nil {
-			return nil, fmt.Errorf("processing item %s: %w", item.UUID, err)
+			return nil, fmt.Errorf("processing item at server index %d: %w", serverIndex, err)
+		}
+		// Recovery replays old operations to reconstruct state, but their
+		// audit records and notifications already belong to the live database.
+		if serverIndex < s.replayLogCutoff {
+			continue
 		}
 
 		// Log each change
@@ -80,7 +85,7 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 // processItem routes an item to the correct handler based on its Kind.
 func (s *Syncer) processItem(item things.Item, serverIndex int, ts time.Time) ([]Change, error) {
 	switch item.Kind {
-	case things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+	case things.ItemKindTask7, things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
 		return s.processTaskItem(item, serverIndex, ts)
 	case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 		return s.processAreaItem(item, serverIndex, ts)
@@ -109,7 +114,7 @@ func (s *Syncer) processTaskItem(item things.Item, serverIndex int, ts time.Time
 	// Get the old state
 	old, err := s.getTask(item.UUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting task %s: %w", item.UUID, err)
+		return nil, fmt.Errorf("getting task: %w", err)
 	}
 
 	// Handle deletion
@@ -123,13 +128,14 @@ func (s *Syncer) processTaskItem(item things.Item, serverIndex int, ts time.Time
 	}
 
 	// Unmarshal the payload
-	var payload things.TaskActionItemPayload
-	if err := json.Unmarshal(item.P, &payload); err != nil {
+	payload, err := things.DecodeTaskReadPayload(item.P)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshaling task payload: %w", err)
 	}
 
 	// Apply payload to build new state
-	newTask := applyTaskPayload(old, item.UUID, payload)
+	newTask := applyTaskPayload(old, item.UUID, payload.TaskActionItemPayload)
+	payload.ApplyNulls(newTask)
 
 	// Save the new state
 	if err := s.saveTask(newTask); err != nil {
@@ -414,10 +420,6 @@ func applyTaskPayload(old *things.Task, uuid string, p things.TaskActionItemPayl
 	}
 	if p.ScheduledDate != nil {
 		t.ScheduledDate = p.ScheduledDate.Time()
-	}
-	if p.TaskIR != nil {
-		// TaskIR (tir) is an alternative scheduled date field
-		t.ScheduledDate = p.TaskIR.Time()
 	}
 	if p.CompletionDate != nil {
 		t.CompletionDate = p.CompletionDate.Time()

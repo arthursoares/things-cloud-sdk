@@ -5,6 +5,7 @@ package sync
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -25,10 +26,11 @@ type dbExecutor interface {
 
 // Syncer manages persistent sync with Things Cloud
 type Syncer struct {
-	rawDB   *sql.DB    // underlying connection for Close() and Begin()
-	db      dbExecutor // current executor (db or tx)
-	client  *things.Client
-	history *things.History
+	rawDB           *sql.DB    // underlying connection for Close() and Begin()
+	db              dbExecutor // current executor (db or tx)
+	client          *things.Client
+	history         *things.History
+	replayLogCutoff int // staging only: suppress events below the old next-batch cursor
 }
 
 // Open creates or opens a sync database and connects to Things Cloud
@@ -37,7 +39,6 @@ func Open(dbPath string, client *things.Client) (*Syncer, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// Enable WAL mode for better concurrent performance
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
@@ -51,6 +52,10 @@ func Open(dbPath string, client *things.Client) (*Syncer, error) {
 	}
 
 	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.ensureTaskReplayState(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -77,6 +82,10 @@ func isRetryableError(err error) bool {
 func (s *Syncer) Sync() ([]Change, error) {
 	// Get current sync state first
 	storedHistoryID, startIndex, err := s.getSyncState()
+	if err != nil {
+		return nil, err
+	}
+	generation, err := s.taskReplayVersion()
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +128,9 @@ func (s *Syncer) Sync() ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
+	if generation < things.TaskReplayVersion {
+		return s.recoverTaskReplay(storedHistoryID, startIndex, generation, serverIndex)
+	}
 
 	// If our cursor is already at or beyond the server's index, nothing to fetch
 	if startIndex >= serverIndex {
@@ -148,9 +160,8 @@ func (s *Syncer) Sync() ([]Change, error) {
 			return nil, fetchErr
 		}
 
-		// No items returned means we're caught up
-		if len(items) == 0 {
-			break
+		if err := validateReplayPage(s.history, startIndex, serverIndex); err != nil {
+			return nil, err
 		}
 
 		// Process each item
@@ -172,6 +183,15 @@ func (s *Syncer) Sync() ([]Change, error) {
 	// duplicate change_log rows).
 
 	return allChanges, nil
+}
+
+// validateReplayPage checks batch cursors, including empty outer batches that
+// legitimately advance the cursor without yielding expanded entity items.
+func validateReplayPage(h *things.History, start, target int) error {
+	if h.LoadedServerIndex <= start || h.LatestServerIndex < h.LoadedServerIndex || h.LatestServerIndex < target {
+		return fmt.Errorf("invalid sync progress: start %d, loaded %d, latest %d, target %d", start, h.LoadedServerIndex, h.LatestServerIndex, target)
+	}
+	return nil
 }
 
 // LastSyncedIndex returns the server index we've synced up to

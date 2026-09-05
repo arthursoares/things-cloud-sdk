@@ -242,6 +242,9 @@ func (h *History) Write(items ...Identifiable) error {
 	if err != nil {
 		return err
 	}
+	if err := validateTaskWriteKinds(bs); err != nil {
+		return err
+	}
 	req, err := http.NewRequest("POST", fmt.Sprintf("/version/1/history/%s/commit", h.ID), bytes.NewReader(bs))
 	req.Header.Add("Schema", "301")
 	req.Header.Add("Push-Priority", "5")

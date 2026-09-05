@@ -302,6 +302,23 @@ func main() {
 }
 ```
 
+### Task7 reads and recovery
+
+The readers accept Task7 alongside Task6 and older task kinds. Task7 write semantics are still unverified: `History.Write` rejects Task7 and unsupported future task kinds, and the CLI continues to send Task6. New read support does not change the outgoing payload format.
+
+The first read after this upgrade replays state built by an older task reader:
+
+- `things-cli` saves the old JSON cache as `<cache-path>.before-replay-<random>.bak`, then atomically replaces the cache after successful replay.
+- The SQLite sync engine keeps opening databases offline. On the next `Sync()`, it detects the old replay generation even if the cursor is already at the cloud head. It creates a consistent `<database-path>.task7-backup-<random>` backup, rebuilds derived state in memory, and installs it in one transaction.
+- Existing SQLite change-log rows, IDs, and timestamps are retained. Historical replay below the old cursor produces no duplicate log entries or notifications. Old Task7 `UnknownChange` rows remain audit evidence; newly fetched events after that cursor are logged normally.
+- Failed or incomplete replay leaves the existing database/cache available for retry. Backups are kept with owner-only permissions. Each SQLite attempt snapshots the current database; identical validated snapshots are deduplicated by full content so repeated failures do not accumulate identical backups. Staging requires memory proportional to the rebuilt state, and each attempt needs temporary free space for a full database snapshot.
+
+Call `Sync()` before relying on database queries after upgrading: `Open()` does not perform network recovery. A future unsupported task kind returns an incomplete-sync error instead of silently advancing the cursor. Diagnostics do not include task payloads.
+
+CLI cache writes use atomic replacement and optimistic change detection, not a cross-process lock. Concurrent readers can replace one another's complete cache snapshots; a later read catches up from the saved cursor. Give concurrent consumers distinct `THINGS_CLI_CACHE` paths if they must not share cache writes. SQLite recovery separately checks its saved metadata within the installation transaction.
+
+Scheduled dates now use `sr` only; `tir` is a separate Today ordering reference date. Omitted task fields preserve prior values, while explicit nulls clear supported nullable dates, notes, and relationships. Modern repeater (`rp`) semantics remain incompletely verified; unknown wire fields remain available in raw `Item.P` and are not newly interpreted by the task model. The existing `ReminderDate` API field tagged `rmd` is a legacy misnomer for repeater migration date.
+
 ### Semantic Change Types
 
 The sync engine detects 40+ semantic change types:

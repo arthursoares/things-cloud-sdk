@@ -519,7 +519,7 @@ type cliContext struct {
 // state. Caches with any other version are ignored, forcing a full replay.
 // Bump it whenever replay output changes for the same history, e.g. when
 // object keys or memory.State's representation change.
-const cliStateCacheVersion = 1
+const cliStateCacheVersion = thingscloud.TaskReplayVersion
 
 type cliStateCache struct {
 	Version     int           `json:"version"`
@@ -548,12 +548,14 @@ func cliStateCachePath() string {
 }
 
 func loadCLIStateCache(path string) (*cliStateCache, error) {
-	bs, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	cache, _, err := loadCLIStateCacheSnapshot(path)
+	return cache, err
+}
+
+func loadCLIStateCacheSnapshot(path string) (*cliStateCache, []byte, error) {
+	bs, err := readCLIStateCacheFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var cache cliStateCache
 	if err := json.Unmarshal(bs, &cache); err != nil {
@@ -561,17 +563,17 @@ func loadCLIStateCache(path string) (*cliStateCache, error) {
 		// partial write) degrades to a full replay, same as a version
 		// mismatch, instead of an error the user can only clear by deleting
 		// the file by hand.
-		return nil, nil
+		return nil, bs, nil
 	}
 	if cache.Version != cliStateCacheVersion {
-		return nil, nil
+		return nil, bs, nil
 	}
 	if cache.State == nil {
 		cache.State = memory.NewState()
 	} else {
 		normalizeMemoryState(cache.State)
 	}
-	return &cache, nil
+	return &cache, bs, nil
 }
 
 func normalizeMemoryState(state *memory.State) {
@@ -590,15 +592,11 @@ func normalizeMemoryState(state *memory.State) {
 }
 
 func saveCLIStateCache(path string, cache *cliStateCache) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	cache.Version = cliStateCacheVersion
-	bs, err := json.MarshalIndent(cache, "", "  ")
+	previous, err := readCLIStateCacheFile(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, bs, 0o600)
+	return saveCLIStateCacheSnapshot(path, cache, previous)
 }
 
 func initCLI(syncHistoryHead bool) *cliContext {
@@ -641,7 +639,7 @@ func (ctx *cliContext) serverIndex() int {
 
 func (ctx *cliContext) loadState() *memory.State {
 	cachePath := cliStateCachePath()
-	cache, err := loadCLIStateCache(cachePath)
+	cache, previous, err := loadCLIStateCacheSnapshot(cachePath)
 	if err != nil {
 		fatal("load state cache", err)
 	}
@@ -665,6 +663,12 @@ func (ctx *cliContext) loadState() *memory.State {
 		if err != nil {
 			fatal("fetch items", err)
 		}
+		if ctx.history.LoadedServerIndex <= startIndex {
+			fatalf("incomplete history: item page made no progress")
+		}
+		if ctx.history.LatestServerIndex < latestServerIndex || ctx.history.LoadedServerIndex > ctx.history.LatestServerIndex {
+			fatalf("incomplete history: inconsistent server cursor during replay")
+		}
 		if err := state.Update(items...); err != nil {
 			fatal("update state", err)
 		}
@@ -674,11 +678,11 @@ func (ctx *cliContext) loadState() *memory.State {
 		}
 	}
 
-	if err := saveCLIStateCache(cachePath, &cliStateCache{
+	if err := saveCLIStateCacheSnapshot(cachePath, &cliStateCache{
 		HistoryID:   ctx.history.ID,
 		ServerIndex: startIndex,
 		State:       state,
-	}); err != nil {
+	}, previous); err != nil {
 		fatal("save state cache", err)
 	}
 
