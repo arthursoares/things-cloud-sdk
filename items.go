@@ -40,14 +40,14 @@ type ItemsOptions struct {
 // Note that if a item was changed multiple times it will be present multiple times in the result too.
 func (h *History) Items(opts ItemsOptions) ([]Item, bool, error) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("/version/1/history/%s/items", h.ID), nil)
+	if err != nil {
+		return nil, false, err
+	}
 
 	values := req.URL.Query()
 	values.Set("start-index", strconv.Itoa(opts.StartIndex))
 	req.URL.RawQuery = values.Encode()
 
-	if err != nil {
-		return nil, false, err
-	}
 	resp, err := h.Client.do(req)
 	if err != nil {
 		return nil, false, err

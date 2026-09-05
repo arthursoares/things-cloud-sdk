@@ -243,21 +243,18 @@ func (h *History) Write(items ...Identifiable) error {
 		return err
 	}
 	req, err := http.NewRequest("POST", fmt.Sprintf("/version/1/history/%s/commit", h.ID), bytes.NewReader(bs))
+	if err != nil {
+		return err
+	}
 	req.Header.Add("Schema", "301")
 	req.Header.Add("Push-Priority", "5")
 	// Full App-Instance-Id matching Things format: {hash}-{bundleId}-{hash}
 	req.Header.Add("App-Instance-Id", "000000000000000000000000000000000000000000000000000000000000000-com.culturedcode.ThingsMac-000000000000000000000000000000000000000000000000000000000000000")
 	req.Header.Add("App-Id", "com.culturedcode.ThingsMac")
-	req.Header.Add("Content-Encoding", "UTF-8")
-	req.Header.Add("Host", "cloud.culturedcode.com")
-	req.Header.Add("Accept", "application/json")
 	query := req.URL.Query()
 	query.Add("ancestor-index", strconv.Itoa(h.LatestServerIndex))
 	query.Add("_cnt", "1")
 	req.URL.RawQuery = query.Encode()
-	if err != nil {
-		return err
-	}
 	resp, err := h.Client.do(req)
 	if err != nil {
 		return err

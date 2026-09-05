@@ -2,7 +2,6 @@ package memory
 
 import (
 	"encoding/json"
-	// "fmt"
 	"sort"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -162,9 +161,6 @@ func (s *State) updateTask(item things.TaskActionItem) *things.Task {
 				}
 			}
 		}
-	}
-	if item.P.Title != nil {
-		t.Title = *item.P.Title
 	}
 	if item.P.AlarmTimeOffset != nil {
 		t.AlarmTimeOffset = item.P.AlarmTimeOffset
