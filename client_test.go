@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-func stringVal(str string) *string {
-	return &str
-}
-
 type fakeResponse struct {
 	statusCode int
 	file       string
@@ -45,7 +41,7 @@ func TestClient_UserAgent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedHeaders = r.Header.Clone()
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer ts.Close()
 
@@ -55,10 +51,11 @@ func TestClient_UserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resp.Body.Close()
 
 	// Verify User-Agent is the updated value
 	got := capturedHeaders.Get("User-Agent")

@@ -46,7 +46,10 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Fetched %d items\n", len(items))
 
 	state := memory.NewState()
-	state.Update(items...)
+	if err := state.Update(items...); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed updating state: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("=== TASKS (%d) ===\n", len(state.Tasks))
 	for _, task := range state.Tasks {

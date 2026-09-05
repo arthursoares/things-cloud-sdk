@@ -2,6 +2,7 @@ package thingscloud
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,11 +19,11 @@ func captureServer(statusCode int, respBody string) (*httptest.Server, *captured
 		cap.Authorization = r.Header.Get("Authorization")
 		bs, _ := io.ReadAll(r.Body)
 		cap.RawBody = string(bs)
-		json.Unmarshal(bs, &cap.Body)
+		_ = json.Unmarshal(bs, &cap.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		if respBody != "" {
-			w.Write([]byte(respBody))
+			_, _ = w.Write([]byte(respBody))
 		}
 	}))
 	return server, cap
@@ -63,7 +64,7 @@ func TestAccountService_Delete(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "wrong")
-		if err := c.Accounts.Delete(); err != ErrUnauthorized {
+		if err := c.Accounts.Delete(); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("Delete err = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -75,7 +76,7 @@ func TestAccountService_Delete(t *testing.T) {
 
 		c := New(server.URL, "martin@example.com", "secret")
 		err := c.Accounts.Delete()
-		if err == nil || err == ErrUnauthorized {
+		if err == nil || errors.Is(err, ErrUnauthorized) {
 			t.Errorf("Delete err = %v, want generic http error", err)
 		}
 	})
@@ -108,7 +109,7 @@ func TestAccountService_AcceptSLA(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "wrong")
-		if err := c.Accounts.AcceptSLA(); err != ErrUnauthorized {
+		if err := c.Accounts.AcceptSLA(); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("AcceptSLA err = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -119,7 +120,7 @@ func TestAccountService_AcceptSLA(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "secret")
-		if err := c.Accounts.AcceptSLA(); err == nil || err == ErrUnauthorized {
+		if err := c.Accounts.AcceptSLA(); err == nil || errors.Is(err, ErrUnauthorized) {
 			t.Errorf("AcceptSLA err = %v, want generic http error", err)
 		}
 	})
@@ -146,7 +147,7 @@ func TestAccountService_Confirm(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "wrong")
-		if err := c.Accounts.Confirm("code"); err != ErrUnauthorized {
+		if err := c.Accounts.Confirm("code"); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("Confirm err = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -157,7 +158,7 @@ func TestAccountService_Confirm(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "secret")
-		if err := c.Accounts.Confirm("code"); err == nil || err == ErrUnauthorized {
+		if err := c.Accounts.Confirm("code"); err == nil || errors.Is(err, ErrUnauthorized) {
 			t.Errorf("Confirm err = %v, want generic http error", err)
 		}
 	})
@@ -230,7 +231,7 @@ func TestAccountService_ChangePassword(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "old")
-		if _, err := c.Accounts.ChangePassword("newpw"); err != ErrUnauthorized {
+		if _, err := c.Accounts.ChangePassword("newpw"); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("ChangePassword err = %v, want ErrUnauthorized", err)
 		}
 	})
@@ -241,7 +242,7 @@ func TestAccountService_ChangePassword(t *testing.T) {
 		defer server.Close()
 
 		c := New(server.URL, "martin@example.com", "old")
-		if _, err := c.Accounts.ChangePassword("newpw"); err == nil || err == ErrUnauthorized {
+		if _, err := c.Accounts.ChangePassword("newpw"); err == nil || errors.Is(err, ErrUnauthorized) {
 			t.Errorf("ChangePassword err = %v, want generic http error", err)
 		}
 	})

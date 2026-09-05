@@ -22,7 +22,7 @@ type VerifyResponse struct {
 	Email              string          `json:"email"`
 	MaildropEmail      string          `json:"maildrop-email"`
 	Status             AccountStatus   `json:"status"`
-	HistoryKey string `json:"history-key"`
+	HistoryKey         string          `json:"history-key"`
 }
 
 // Verify checks that the provided API credentials are valid.
@@ -48,6 +48,8 @@ func (c *Client) Verify() (*VerifyResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(bs, &v)
+	if err := json.Unmarshal(bs, &v); err != nil {
+		return nil, err
+	}
 	return &v, nil
 }

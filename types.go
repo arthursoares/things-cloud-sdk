@@ -75,10 +75,11 @@ var (
 	// ItemKindSettings  identifies a setting
 	ItemKindSettings ItemKind = "Settings3"
 	// ItemKindTag identifies a Tag
-	ItemKindTag      ItemKind = "Tag3"
-	ItemKindTag4     ItemKind = "Tag4"
-	ItemKindTagPlain  ItemKind = "Tag"
-	ItemKindTombstone ItemKind = "Tombstone2"
+	ItemKindTag            ItemKind = "Tag3"
+	ItemKindTag4           ItemKind = "Tag4"
+	ItemKindTagPlain       ItemKind = "Tag"
+	ItemKindTombstone      ItemKind = "Tombstone2"
+	ItemKindTombstonePlain ItemKind = "Tombstone"
 )
 
 // Timestamp allows unix epochs represented as float or ints to be unmarshalled
@@ -198,39 +199,39 @@ type Task struct {
 	AreaIDs          []string
 	ParentTaskIDs    []string
 	ActionGroupIDs   []string
-	InTrash         bool
-	Schedule        TaskSchedule
-	Type            TaskType
-	TodayIndex      int
-	DueOrder        int
-	AlarmTimeOffset *int
-	TagIDs          []string
-	RecurrenceIDs   []string
-	DelegateIDs     []string
+	InTrash          bool
+	Schedule         TaskSchedule
+	Type             TaskType
+	TodayIndex       int
+	DueOrder         int
+	AlarmTimeOffset  *int
+	TagIDs           []string
+	RecurrenceIDs    []string
+	DelegateIDs      []string
 }
 
 // TaskActionItemPayload describes the payload for modifying Tasks, and also Projects,
 // as projects are special kind of Tasks
 type TaskActionItemPayload struct {
-	Index             *int                   `json:"ix,omitempty"`
-	CreationDate      *Timestamp             `json:"cd,omitempty"`
-	ModificationDate  *Timestamp             `json:"md,omitempty"` // ok
-	ScheduledDate     *Timestamp             `json:"sr,omitempty"`
-	CompletionDate    *Timestamp             `json:"sp,omitempty"`
-	DeadlineDate      *Timestamp             `json:"dd,omitempty"`  //
-	TaskIR            *Timestamp             `json:"tir,omitempty"` // hm, not sure what tir stands for
-	Status            *TaskStatus            `json:"ss,omitempty"`
-	Type              *TaskType              `json:"tp,omitempty"`
-	Title             *string                `json:"tt,omitempty"`
-	Note              json.RawMessage        `json:"nt,omitempty"`
-	AreaIDs           *[]string              `json:"ar,omitempty"`
-	ParentTaskIDs     *[]string              `json:"pr,omitempty"`
-	TagIDs            []string               `json:"tg,omitempty"`
-	InTrash           *bool                  `json:"tr,omitempty"`
-	TaskIndex         *int                   `json:"ti,omitempty"`
-	RecurrenceTaskIDs *[]string              `json:"rt,omitempty"`
-	Schedule          *TaskSchedule          `json:"st,omitempty"`
-	ActionGroupIDs    *[]string              `json:"agr,omitempty"`
+	Index                     *int                   `json:"ix,omitempty"`
+	CreationDate              *Timestamp             `json:"cd,omitempty"`
+	ModificationDate          *Timestamp             `json:"md,omitempty"` // ok
+	ScheduledDate             *Timestamp             `json:"sr,omitempty"`
+	CompletionDate            *Timestamp             `json:"sp,omitempty"`
+	DeadlineDate              *Timestamp             `json:"dd,omitempty"`  //
+	TaskIR                    *Timestamp             `json:"tir,omitempty"` // hm, not sure what tir stands for
+	Status                    *TaskStatus            `json:"ss,omitempty"`
+	Type                      *TaskType              `json:"tp,omitempty"`
+	Title                     *string                `json:"tt,omitempty"`
+	Note                      json.RawMessage        `json:"nt,omitempty"`
+	AreaIDs                   *[]string              `json:"ar,omitempty"`
+	ParentTaskIDs             *[]string              `json:"pr,omitempty"`
+	TagIDs                    []string               `json:"tg,omitempty"`
+	InTrash                   *bool                  `json:"tr,omitempty"`
+	TaskIndex                 *int                   `json:"ti,omitempty"`
+	RecurrenceTaskIDs         *[]string              `json:"rt,omitempty"`
+	Schedule                  *TaskSchedule          `json:"st,omitempty"`
+	ActionGroupIDs            *[]string              `json:"agr,omitempty"`
 	Repeater                  *RepeaterConfiguration `json:"rr,omitempty"`
 	DueOrder                  *int                   `json:"do,omitempty"`
 	Leavable                  *bool                  `json:"lt,omitempty"`
@@ -306,9 +307,9 @@ type Tag struct {
 // TagActionItemPayload describes the payload for modifying Areas
 type TagActionItemPayload struct {
 	IX            *int            `json:"ix"`
-	Title         *string        `json:"tt"`
-	ShortHand     *string        `json:"sh"`
-	ParentTagIDs  *[]string      `json:"pn"`
+	Title         *string         `json:"tt"`
+	ShortHand     *string         `json:"sh"`
+	ParentTagIDs  *[]string       `json:"pn"`
 	ExtensionData json.RawMessage `json:"xx,omitempty"`
 }
 
@@ -361,14 +362,14 @@ func (item AreaActionItem) UUID() string {
 }
 
 // CheckListItem describes a check list item
-//0|uuid|TEXT|0||1
-//1|userModificationDate|REAL|0||0
-//2|creationDate|REAL|0||0
-//3|title|TEXT|0||0
-//4|status|INTEGER|0||0
-//5|stopDate|REAL|0||0
-//6|index|INTEGER|0||0
-//7|task|TEXT|0||0
+// 0|uuid|TEXT|0||1
+// 1|userModificationDate|REAL|0||0
+// 2|creationDate|REAL|0||0
+// 3|title|TEXT|0||0
+// 4|status|INTEGER|0||0
+// 5|stopDate|REAL|0||0
+// 6|index|INTEGER|0||0
+// 7|task|TEXT|0||0
 type CheckListItem struct {
 	UUID             string
 	CreationDate     time.Time
@@ -382,11 +383,11 @@ type CheckListItem struct {
 
 // CheckListActionItemPayload describes the payload for modifying CheckListItems
 type CheckListActionItemPayload struct {
-	CreationDate     *Timestamp  `json:"cd,omitempty"`
-	ModificationDate *Timestamp  `json:"md,omitempty"`
-	Index            *int        `json:"ix"`
-	Status           *TaskStatus `json:"ss,omitempty"`
-	Title            *string     `json:"tt,omitempty"`
+	CreationDate     *Timestamp      `json:"cd,omitempty"`
+	ModificationDate *Timestamp      `json:"md,omitempty"`
+	Index            *int            `json:"ix"`
+	Status           *TaskStatus     `json:"ss,omitempty"`
+	Title            *string         `json:"tt,omitempty"`
 	CompletionDate   *Timestamp      `json:"sp,omitempty"`
 	TaskIDs          *[]string       `json:"ts,omitempty"`
 	Leavable         *bool           `json:"lt,omitempty"`

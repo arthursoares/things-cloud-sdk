@@ -18,7 +18,7 @@ func TestClient_RegisterAppInstance(t *testing.T) {
 		capturedMethod = r.Method
 		capturedPath = r.URL.Path
 		bs, _ := io.ReadAll(r.Body)
-		json.Unmarshal(bs, &capturedBody)
+		_ = json.Unmarshal(bs, &capturedBody)
 		w.WriteHeader(200)
 	}))
 	defer ts.Close()

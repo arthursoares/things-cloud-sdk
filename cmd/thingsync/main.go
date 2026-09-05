@@ -134,7 +134,9 @@ func main() {
 		home, _ := os.UserHomeDir()
 		*dbPath = filepath.Join(home, ".things-workflow", "sync.db")
 	}
-	os.MkdirAll(filepath.Dir(*dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0755); err != nil {
+		log.Fatalf("create db directory: %v", err)
+	}
 
 	// Create client and syncer
 	client := things.New(things.APIEndpoint, username, password)
@@ -190,7 +192,9 @@ func main() {
 	} else {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(output)
+		if err := enc.Encode(output); err != nil {
+			log.Fatalf("write output: %v", err)
+		}
 	}
 }
 
@@ -833,7 +837,9 @@ func printTodayView(syncer *sync.Syncer) {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(view)
+	if err := enc.Encode(view); err != nil {
+		log.Fatalf("write output: %v", err)
+	}
 }
 
 func printInboxView(syncer *sync.Syncer) {
@@ -873,7 +879,9 @@ func printInboxView(syncer *sync.Syncer) {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(view)
+	if err := enc.Encode(view); err != nil {
+		log.Fatalf("write output: %v", err)
+	}
 }
 
 func printReviewView(syncer *sync.Syncer) {
@@ -919,7 +927,9 @@ func printReviewView(syncer *sync.Syncer) {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(view)
+	if err := enc.Encode(view); err != nil {
+		log.Fatalf("write output: %v", err)
+	}
 }
 
 func printPatternsView(syncer *sync.Syncer) {
@@ -969,5 +979,7 @@ func printPatternsView(syncer *sync.Syncer) {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(view)
+	if err := enc.Encode(view); err != nil {
+		log.Fatalf("write output: %v", err)
+	}
 }
