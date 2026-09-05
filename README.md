@@ -167,7 +167,7 @@ things-cli create-area "Name"
 things-cli create-tag "Name" [--shorthand KEY] [--parent UUID]
 
 # Modify
-things-cli edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...]
+things-cli edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...] [--scheduled YYYY-MM-DD]
 things-cli complete <uuid>
 things-cli trash <uuid>
 things-cli purge <uuid>
@@ -177,6 +177,12 @@ things-cli move-to-today <uuid>
 # UUIDs must be canonical Base58 identifiers, as returned by create/list
 echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":"VJ1edXTP9q3PmFDUuy8EQh"}]' | things-cli batch
 ```
+
+`--scheduled` uses the local calendar date: future dates appear in Upcoming,
+while today and past dates use the Today/Anytime schedule. If `--when` is also
+provided, its schedule takes precedence and `--scheduled` still supplies the
+date. For batch creates, pass the date as
+`"extra":{"scheduled":"YYYY-MM-DD"}`.
 
 ### Examples
 

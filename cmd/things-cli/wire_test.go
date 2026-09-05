@@ -457,6 +457,50 @@ func TestCmdEditWire(t *testing.T) {
 	}
 }
 
+func TestCmdEditFutureScheduledWire(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+	proj := thingscloud.NewUUID()
+	future := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	wantDate := float64(parseDate(future).Unix())
+
+	cmdEdit(h, id, []string{"--scheduled", future, "--project", proj})
+
+	gotID, action, kind, p := singleItem(t, (*commits)[0])
+	if gotID != id || action != 1 || kind != "Task6" {
+		t.Fatalf("edit envelope = (%s, %d, %s), want (%s, 1, Task6)", gotID, action, kind, id)
+	}
+	if p["st"] != float64(2) || p["sr"] != wantDate || p["tir"] != wantDate {
+		t.Fatalf("future schedule = st:%v sr:%v tir:%v, want 2/%v/%v", p["st"], p["sr"], p["tir"], wantDate, wantDate)
+	}
+	pr, ok := p["pr"].([]any)
+	if !ok || len(pr) != 1 || pr[0] != proj {
+		t.Fatalf("pr = %v, want [%s]", p["pr"], proj)
+	}
+	if len(p) != 5 {
+		t.Fatalf("edit payload fields = %v, want only md, st, sr, tir, pr", p)
+	}
+}
+
+func TestCmdEditExplicitWhenOverridesScheduledClassification(t *testing.T) {
+	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+	area := thingscloud.NewUUID()
+	future := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	wantDate := float64(parseDate(future).Unix())
+
+	cmdEdit(h, id, []string{"--scheduled", future, "--when", "anytime", "--area", area})
+
+	_, _, _, p := singleItem(t, (*commits)[0])
+	if p["st"] != float64(1) || p["sr"] != wantDate || p["tir"] != wantDate {
+		t.Fatalf("explicit anytime schedule = st:%v sr:%v tir:%v, want 1/%v/%v", p["st"], p["sr"], p["tir"], wantDate, wantDate)
+	}
+	areas, ok := p["ar"].([]any)
+	if !ok || len(areas) != 1 || areas[0] != area {
+		t.Fatalf("ar = %v, want [%s]", p["ar"], area)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // initCLI / loadState / cmdBatch — full command plumbing against a fake server
 // ---------------------------------------------------------------------------
