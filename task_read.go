@@ -114,6 +114,39 @@ func validateTaskReadNote(raw json.RawMessage) error {
 	return nil
 }
 
+// ResolveNote applies the note field to current using the read protocol's
+// plain-text, full-text, delta, and explicit-null semantics.
+func (p TaskReadPayload) ResolveNote(current string) (string, error) {
+	if p.nullFields["nt"] {
+		return "", nil
+	}
+	if len(p.Note) == 0 {
+		return current, nil
+	}
+
+	var noteText string
+	if err := json.Unmarshal(p.Note, &noteText); err == nil {
+		return noteText, nil
+	}
+
+	var note Note
+	if err := json.Unmarshal(p.Note, &note); err != nil {
+		return "", fmt.Errorf("decoding task note: %w", err)
+	}
+	switch note.Type {
+	case NoteTypeFullText:
+		return note.Value, nil
+	case NoteTypeDelta:
+		result, err := ApplyPatchesChecked(current, note.Patches)
+		if err != nil {
+			return "", fmt.Errorf("applying task note delta: %w", err)
+		}
+		return result, nil
+	default:
+		return "", fmt.Errorf("unsupported task note type %d", note.Type)
+	}
+}
+
 // ApplyNulls clears nullable fields after the ordinary non-nil payload fields
 // have been applied. In particular, tir is a reference date and never changes
 // ScheduledDate; only sr controls that field.

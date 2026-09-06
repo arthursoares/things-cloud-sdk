@@ -73,18 +73,41 @@ caught-up version-2 cache/database recovery with preserved SQLite audit rows.
 The actual disposable-account version-2 CLI cache was also repaired by the
 new binary and matched the app after restart.
 
+## Follow-up: checked replay and relationship tests
+
+Checked note replay now rejects invalid UTF-8 before applying a memory batch
+or committing a SQLite transaction. Existing public `ApplyPatches` behavior
+remains available; the state backends use the checked path. The decoder does
+not infer checksum semantics from this example.
+
+A further seven-object commit created a Task7 project in the disposable area,
+a Task7 heading, two Task7 child tasks, a Tag4 tag, and two ChecklistItem3
+children. One task was created under the heading with the tag and checklist;
+the other was created directly under the project. Exact cloud readback,
+SDK state, and read-only Things database checks passed for all objects and
+relationships. The project, heading, and tasks displayed correctly in Things.
+
+A subsequent two-task commit moved the first child from its heading/project
+to the disposable area, cleared its tag, and moved the second child into the
+heading with that tag. Explicit empty relationship arrays and the submitted
+ordering values matched both the SDK and Things database after sync. The
+project view showed the second child under the heading.
+
+This verifies those particular batch and relationship shapes. It does not
+test concurrent reordering, every checklist operation, or repeat-instance
+relationships. The default SDK/CLI write envelope remains Task6.
+
 ## Remaining verification gaps
 
 - Non-null `rp`/`rr`, modern recurrence and repeat-instance operations.
-- Direct Task7 project/heading creation, relationship moves, tags, checklists,
-  reminders, ordering under concurrency, and bulk writes.
+- Reminders, ordering under concurrency, and broader bulk/checklist operations
+  beyond the specific creation and move cases above.
 - Permanent deletion and wire action `t=2` were not exercised in this write test.
 - Conflict/retry behavior, offline concurrent edits, and multi-device convergence.
 - Raw native HTTP headers/body equivalence; server persistence may normalize
   requests. No TLS interception or certificate changes were used.
 - The general malformed-patch/checksum contract is not established by this
-  successful Unicode example. A malformed byte range splitting a multibyte
-  character can still yield invalid UTF-8; checked replay with transactional
-  error propagation would require a separate change.
+  successful Unicode example. Checked replay rejects invalid UTF-8 results;
+  it does not detect every semantically wrong patch that still yields valid text.
 
 These limits must stay explicit in any proposal to enable Task7 writes.

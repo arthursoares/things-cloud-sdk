@@ -2,7 +2,9 @@ package thingscloud
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestNote_FullText(t *testing.T) {
@@ -83,5 +85,87 @@ func TestNote_ApplyMultiplePatches(t *testing.T) {
 	result := ApplyPatches(original, patches)
 	if result != "XBCDEF" {
 		t.Errorf("expected 'XBCDEF', got '%s'", result)
+	}
+}
+
+func TestApplyPatchesCheckedRejectsInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	_, err := ApplyPatchesChecked("α", []NotePatch{{Position: 1, Length: 1}})
+	if err == nil {
+		t.Fatal("ApplyPatchesChecked accepted a patch that split a UTF-8 encoding")
+	}
+	if !strings.Contains(err.Error(), "patch 0") {
+		t.Fatalf("error %q does not identify the invalid patch", err)
+	}
+}
+
+func TestApplyPatchesCheckedRejectsInvalidOriginal(t *testing.T) {
+	t.Parallel()
+
+	invalid := string([]byte{0xff})
+	for _, patches := range [][]NotePatch{
+		nil,
+		{{Position: 0, Length: 1, Replacement: "valid"}},
+	} {
+		if _, err := ApplyPatchesChecked(invalid, patches); err == nil {
+			t.Fatalf("ApplyPatchesChecked accepted invalid original with patches %+v", patches)
+		}
+	}
+}
+
+func TestApplyPatchesCheckedAllowsMidCodePointNoOpWhenResultIsValid(t *testing.T) {
+	t.Parallel()
+
+	got, err := ApplyPatchesChecked("α", []NotePatch{{Position: 1}})
+	if err != nil {
+		t.Fatalf("ApplyPatchesChecked rejected a valid result: %v", err)
+	}
+	if got != "α" {
+		t.Fatalf("ApplyPatchesChecked = %q, want α", got)
+	}
+}
+
+func TestApplyPatchesCheckedRejectsInvalidIntermediateResult(t *testing.T) {
+	t.Parallel()
+
+	patches := []NotePatch{
+		{Position: 1, Length: 1}, // Leaves only the first byte of α.
+		{Position: 0, Length: 1}, // Would make the final result valid again.
+	}
+	if got := ApplyPatches("α", patches); got != "" || !utf8.ValidString(got) {
+		t.Fatalf("test setup produced %q, want a valid empty final result", got)
+	}
+	if _, err := ApplyPatchesChecked("α", patches); err == nil {
+		t.Fatal("ApplyPatchesChecked accepted an invalid intermediate result")
+	}
+}
+
+func TestApplyPatchesCheckedRejectsInvalidLaterPatch(t *testing.T) {
+	t.Parallel()
+
+	patches := []NotePatch{
+		{Position: 0, Length: 0, Replacement: "A"},
+		{Position: 2, Length: 1}, // Splits α after the valid insertion.
+	}
+	if _, err := ApplyPatchesChecked("α", patches); err == nil || !strings.Contains(err.Error(), "patch 1") {
+		t.Fatalf("ApplyPatchesChecked error = %v, want invalid patch 1", err)
+	}
+}
+
+func TestApplyPatchesCheckedValidNativeUnicodeDelta(t *testing.T) {
+	t.Parallel()
+
+	got, err := ApplyPatchesChecked("Native Task7 note α 🚀\nSecond line.", []NotePatch{{
+		Position:    26,
+		Length:      5,
+		Replacement: "Update",
+		Checksum:    3672733299,
+	}})
+	if err != nil {
+		t.Fatalf("ApplyPatchesChecked: %v", err)
+	}
+	if got != "Native Task7 note α 🚀\nUpdated line." {
+		t.Fatalf("ApplyPatchesChecked = %q", got)
 	}
 }
