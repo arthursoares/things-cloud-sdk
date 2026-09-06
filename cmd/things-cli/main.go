@@ -217,6 +217,13 @@ func todayMidnightUTC() int64 {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
 }
 
+func taskScheduleForDate(scheduledDate, today int64) int {
+	if scheduledDate > today {
+		return 2
+	}
+	return 1
+}
+
 func parseDate(s string) *time.Time {
 	t, err := time.Parse("2006-01-02", s)
 	if err != nil {
@@ -344,14 +351,15 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 		}
 	}
 
-	// --scheduled (overrides sr/tir; sets st=1 with dates if not already set by --when)
+	// --scheduled overrides sr/tir. Without --when, future dates are Upcoming
+	// (st=2), while today and past dates use Today/Anytime (st=1).
 	if v, ok := opts["scheduled"]; ok {
 		if t := parseDate(v); t != nil {
 			ts := t.Unix()
 			sr = &ts
 			tir = &ts
 			if _, hasWhen := opts["when"]; !hasWhen {
-				st = 1 // default to anytime+date
+				st = taskScheduleForDate(ts, todayMidnightUTC())
 			}
 		}
 	}
@@ -359,8 +367,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --project
 	if v, ok := opts["project"]; ok && v != "" {
 		pr = []string{v}
-		// Tasks in projects are already triaged — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks in projects are already triaged — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -368,8 +377,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --heading
 	if v, ok := opts["heading"]; ok && v != "" {
 		agr = []string{v}
-		// Tasks under headings are structural — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks under headings are structural — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -377,8 +387,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --area
 	if v, ok := opts["area"]; ok && v != "" {
 		ar = []string{v}
-		// Tasks in areas are already triaged — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks in areas are already triaged — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -497,7 +508,7 @@ func (u *taskUpdate) Inbox() *taskUpdate {
 }
 
 func (u *taskUpdate) ScheduleDate(ts int64) *taskUpdate {
-	return u.Schedule(1, ts, ts)
+	return u.Schedule(taskScheduleForDate(ts, todayMidnightUTC()), ts, ts)
 }
 
 func (u *taskUpdate) Deadline(dd int64) *taskUpdate {
@@ -1541,6 +1552,9 @@ Write commands (fast — skip state loading):
   edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...]
          [--scheduled ...] [--area UUID] [--project UUID]
          [--heading UUID] [--tags UUID,...]
+
+  --scheduled uses Upcoming for future local dates and Today/Anytime for today
+  or past dates. An explicit --when takes precedence over that classification.
   complete <uuid>
   trash <uuid>
   purge <uuid>
@@ -1553,7 +1567,8 @@ Batch command (reads JSON from stdin, sends all ops in one HTTP request):
 
   Supported operations:
     {"cmd": "create", "title": "...", "note": "...", "when": "today|anytime|someday|inbox",
-     "project": "uuid", "area": "uuid", "heading": "uuid", "tags": ["uuid",...]}
+     "project": "uuid", "area": "uuid", "heading": "uuid", "tags": ["uuid",...],
+     "extra": {"scheduled": "YYYY-MM-DD"}}
     {"cmd": "complete", "uuid": "..."}
     {"cmd": "trash", "uuid": "..."}
     {"cmd": "purge", "uuid": "..."}

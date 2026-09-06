@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +55,173 @@ func TestTaskUpdateAnytimeClearsScheduleDates(t *testing.T) {
 	}
 }
 
+func TestTaskScheduleForDate(t *testing.T) {
+	today := time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC).Unix()
+	tests := []struct {
+		name string
+		date int64
+		want int
+	}{
+		{name: "past", date: today - 86400, want: 1},
+		{name: "today", date: today, want: 1},
+		{name: "future", date: today + 86400, want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := taskScheduleForDate(tt.date, today); got != tt.want {
+				t.Fatalf("taskScheduleForDate() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewTaskCreatePayloadScheduledDateClassification(t *testing.T) {
+	today := time.Now()
+	tests := []struct {
+		name string
+		date time.Time
+		want int
+	}{
+		{name: "past", date: today.AddDate(0, 0, -1), want: 1},
+		{name: "today", date: today, want: 1},
+		{name: "future", date: today.AddDate(0, 0, 1), want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			date := tt.date.Format("2006-01-02")
+			wantDate := parseDate(date).Unix()
+			payload := newTaskCreatePayload("scheduled", map[string]string{"scheduled": date})
+			if payload.St != tt.want {
+				t.Fatalf("st = %d, want %d", payload.St, tt.want)
+			}
+			if payload.Sr == nil || *payload.Sr != wantDate || payload.Tir == nil || *payload.Tir != wantDate {
+				t.Fatalf("sr/tir = %v/%v, want UTC midnight %d", payload.Sr, payload.Tir, wantDate)
+			}
+		})
+	}
+}
+
+func TestNewTaskCreatePayloadExplicitWhenOverridesScheduledClassification(t *testing.T) {
+	today := time.Now()
+	tests := []struct {
+		name string
+		when string
+		date time.Time
+		want int
+	}{
+		{name: "future anytime", when: "anytime", date: today.AddDate(0, 0, 1), want: 1},
+		{name: "today someday", when: "someday", date: today, want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			date := tt.date.Format("2006-01-02")
+			wantDate := parseDate(date).Unix()
+			payload := newTaskCreatePayload("scheduled", map[string]string{
+				"scheduled": date,
+				"when":      tt.when,
+			})
+			if payload.St != tt.want {
+				t.Fatalf("st = %d, want explicit --when status %d", payload.St, tt.want)
+			}
+			if payload.Sr == nil || *payload.Sr != wantDate || payload.Tir == nil || *payload.Tir != wantDate {
+				t.Fatalf("sr/tir = %v/%v, want scheduled date %d", payload.Sr, payload.Tir, wantDate)
+			}
+		})
+	}
+}
+
+func TestNewTaskCreatePayloadRelationshipsPreserveScheduledStatus(t *testing.T) {
+	future := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	tests := []struct {
+		name string
+		opts map[string]string
+	}{
+		{name: "project", opts: map[string]string{"scheduled": future, "project": testProjectID}},
+		{name: "area", opts: map[string]string{"scheduled": future, "area": testAreaID}},
+		{name: "heading", opts: map[string]string{"scheduled": future, "heading": testHeadingID}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := newTaskCreatePayload("scheduled", tt.opts)
+			if payload.St != 2 {
+				t.Fatalf("st = %d, want 2", payload.St)
+			}
+			if payload.Sr == nil || payload.Tir == nil {
+				t.Fatalf("sr/tir = %v/%v, want scheduled date", payload.Sr, payload.Tir)
+			}
+		})
+	}
+}
+
+func TestTaskUpdateScheduleDateClassification(t *testing.T) {
+	today := todayMidnightUTC()
+	for _, tt := range []struct {
+		name string
+		date int64
+		want int
+	}{
+		{name: "past", date: today - 86400, want: 1},
+		{name: "today", date: today, want: 1},
+		{name: "future", date: today + 86400, want: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := newTaskUpdate().ScheduleDate(tt.date).build()
+			if payload["st"] != tt.want || payload["sr"] != tt.date || payload["tir"] != tt.date {
+				t.Fatalf("schedule = st:%v sr:%v tir:%v, want %d/%d/%d", payload["st"], payload["sr"], payload["tir"], tt.want, tt.date, tt.date)
+			}
+		})
+	}
+}
+
+func TestBatchCreateScheduledDateMatchesCreate(t *testing.T) {
+	today := time.Now()
+	tests := []struct {
+		name string
+		date time.Time
+		when string
+	}{
+		{name: "past", date: today.AddDate(0, 0, -1)},
+		{name: "today", date: today},
+		{name: "future", date: today.AddDate(0, 0, 1)},
+		{name: "explicit someday", date: today, when: "someday"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			date := tt.date.Format("2006-01-02")
+			opts := map[string]string{"scheduled": date, "project": testProjectID}
+			if tt.when != "" {
+				opts["when"] = tt.when
+			}
+			want := newTaskCreatePayload("scheduled", opts)
+
+			env, _, err := buildBatchCreate(BatchOp{
+				Title:   "scheduled",
+				When:    tt.when,
+				Project: testProjectID,
+				Extra:   map[string]string{"scheduled": date},
+			})
+			if err != nil {
+				t.Fatalf("buildBatchCreate failed: %v", err)
+			}
+			payload, ok := env.(writeEnvelope).payload.(TaskCreatePayload)
+			if !ok {
+				t.Fatalf("batch payload = %T, want TaskCreatePayload", env.(writeEnvelope).payload)
+			}
+			if payload.St != want.St || payload.Sr == nil || want.Sr == nil || *payload.Sr != *want.Sr || payload.Tir == nil || want.Tir == nil || *payload.Tir != *want.Tir {
+				t.Fatalf("batch schedule = st:%d sr:%v tir:%v, want create schedule st:%d sr:%v tir:%v", payload.St, payload.Sr, payload.Tir, want.St, want.Sr, want.Tir)
+			}
+			if len(payload.Pr) != 1 || payload.Pr[0] != testProjectID {
+				t.Fatalf("batch project = %v, want [%s]", payload.Pr, testProjectID)
+			}
+		})
+	}
+}
+
 func TestHasExplicitSchedule(t *testing.T) {
 	tests := []struct {
 		name string
@@ -80,6 +249,82 @@ func TestHasExplicitSchedule(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hasExplicitSchedule(tt.opts); got != tt.want {
 				t.Fatalf("hasExplicitSchedule() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScheduledOptionValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    map[string]string
+		wantErr bool
+	}{
+		{name: "absent", opts: map[string]string{}},
+		{name: "valid", opts: map[string]string{"scheduled": "2026-09-06"}},
+		{name: "missing value", opts: map[string]string{"scheduled": "true"}, wantErr: true},
+		{name: "empty", opts: map[string]string{"scheduled": ""}, wantErr: true},
+		{name: "malformed", opts: map[string]string{"scheduled": "tomorrow"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTaskOpts(tt.opts)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTaskOpts(%v) error = %v, wantErr %v", tt.opts, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDirectCommandsRejectInvalidScheduledBeforeWrite(t *testing.T) {
+	if command := os.Getenv("THINGS_CLI_INVALID_SCHEDULE_COMMAND"); command != "" {
+		h, commits := newWireRecorder(t)
+		switch command {
+		case "create":
+			cmdCreate(h, []string{"invalid", "--scheduled", "tomorrow", "--project", testProjectID})
+		case "edit":
+			cmdEdit(h, testTaskID, []string{"--scheduled", "--area", testAreaID})
+		default:
+			t.Fatalf("unknown helper command %q", command)
+		}
+		if len(*commits) != 0 {
+			t.Fatalf("invalid schedule wrote %d commits, want zero", len(*commits))
+		}
+		return
+	}
+
+	for _, command := range []string{"create", "edit"} {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestDirectCommandsRejectInvalidScheduledBeforeWrite$")
+			cmd.Env = append(os.Environ(), "THINGS_CLI_INVALID_SCHEDULE_COMMAND="+command)
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("%s with invalid --scheduled succeeded; output: %s", command, output)
+			}
+			if !strings.Contains(string(output), "--scheduled") {
+				t.Fatalf("%s error = %s, want scheduled-date validation error", command, output)
+			}
+		})
+	}
+}
+
+func TestBuildBatchCreateRejectsInvalidScheduled(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		scheduled string
+	}{
+		{name: "missing value", scheduled: ""},
+		{name: "malformed", scheduled: "tomorrow"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := buildBatchCreate(BatchOp{
+				Title:   "invalid",
+				Project: testProjectID,
+				Extra:   map[string]string{"scheduled": tt.scheduled},
+			})
+			if err == nil || !strings.Contains(err.Error(), "--scheduled") {
+				t.Fatalf("buildBatchCreate error = %v, want scheduled-date validation error", err)
 			}
 		})
 	}
