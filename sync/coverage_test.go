@@ -389,47 +389,10 @@ func TestProcessTagChecklistTombstone(t *testing.T) {
 	})
 }
 
-// TestProcessNotePayloads covers parseNotePayload for plain-string, full-text,
-// and delta note representations.
+// TestProcessNotePayloads covers delivery of a decoded note through the
+// transactional sync path.
 func TestProcessNotePayloads(t *testing.T) {
 	t.Parallel()
-
-	t.Run("plain string note", func(t *testing.T) {
-		t.Parallel()
-		got := parseNotePayload("old", json.RawMessage(`"a plain note"`))
-		if got != "a plain note" {
-			t.Errorf("expected plain string note, got %q", got)
-		}
-	})
-
-	t.Run("full text note", func(t *testing.T) {
-		t.Parallel()
-		raw, _ := json.Marshal(things.Note{Type: things.NoteTypeFullText, Value: "full replacement"})
-		got := parseNotePayload("old", raw)
-		if got != "full replacement" {
-			t.Errorf("expected full-text replacement, got %q", got)
-		}
-	})
-
-	t.Run("delta note applies patches", func(t *testing.T) {
-		t.Parallel()
-		raw, _ := json.Marshal(things.Note{
-			Type:    things.NoteTypeDelta,
-			Patches: []things.NotePatch{{Position: 0, Length: 0, Replacement: "Hi "}},
-		})
-		got := parseNotePayload("there", raw)
-		if got != "Hi there" {
-			t.Errorf("expected patched note 'Hi there', got %q", got)
-		}
-	})
-
-	t.Run("invalid note keeps current value", func(t *testing.T) {
-		t.Parallel()
-		got := parseNotePayload("unchanged", json.RawMessage(`12345`))
-		if got != "unchanged" {
-			t.Errorf("expected current note preserved, got %q", got)
-		}
-	})
 
 	t.Run("note delivered through processItems", func(t *testing.T) {
 		t.Parallel()

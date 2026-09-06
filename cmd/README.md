@@ -40,8 +40,8 @@ things-cli move-to-today <uuid>
 echo '[
   {"cmd": "create", "title": "Task 1"},
   {"cmd": "create", "title": "Task 2"},
-  {"cmd": "complete", "uuid": "abc123"},
-  {"cmd": "move-to-project", "uuid": "def456", "project": "proj-uuid"}
+  {"cmd": "complete", "uuid": "BXmAcvS6yK1eDhW31MuZrL"},
+  {"cmd": "move-to-project", "uuid": "VJ1edXTP9q3PmFDUuy8EQh", "project": "FQxaqvLBkbR5q2Q5oRoknc"}
 ]' | things-cli batch
 
 # Batch commands: create, complete, trash, purge, move-to-today,
@@ -61,6 +61,22 @@ echo '[
 #   --tags UUID,UUID,...    Add tags
 #   --type task|project|heading
 #   --checklist "Item 1,Item 2,..."
+```
+
+#### Write validation
+
+Replace the sample UUIDs above with IDs returned by `create` or `list` for your account.
+
+Invalid identifiers, schedule names, task types, and dates cause a nonzero exit before any commit is sent. Identifiers must be canonical Base58 exactly as supplied, including `create-area --tags`, `create-tag --parent`, and purge targets. Do not include spaces around comma-separated tag IDs.
+
+`--when` accepts `today`, `anytime`, `someday`, or `inbox`; `--type` accepts `task`, `project`, or `heading`. Dates must be real calendar dates in `YYYY-MM-DD` format. Invalid or missing option values are rejected instead of silently producing default or partial writes.
+
+A batch is submitted only after every operation passes validation. Its input must contain one JSON array, with no unknown top-level operation fields or trailing input. Empty optional top-level batch strings retain their existing meaning of "not supplied." Explicitly empty identifier options in individual commands or `extra` are rejected; omit an optional identifier instead.
+
+Batch `create` also accepts an `extra` object containing `note`, `when`, `deadline`, `scheduled`, `project`, `area`, `heading`, `tags`, or `type`. These values override the corresponding create options and are validated after merging. `extra.tags` is comma-separated text; top-level `tags` is a JSON array. Other operations reject an `extra` object, including `{}`; `extra: null` is treated as absent. For example:
+
+```json
+[{"cmd":"create","title":"Plan launch","extra":{"scheduled":"2026-10-15"}}]
 ```
 
 ### thingsync

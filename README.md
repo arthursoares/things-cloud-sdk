@@ -167,7 +167,7 @@ things-cli create-area "Name"
 things-cli create-tag "Name" [--shorthand KEY] [--parent UUID]
 
 # Modify
-things-cli edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...]
+things-cli edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...] [--scheduled YYYY-MM-DD]
 things-cli complete <uuid>
 things-cli trash <uuid>
 things-cli purge <uuid>
@@ -178,7 +178,15 @@ things-cli move-to-today <uuid>
 echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":"VJ1edXTP9q3PmFDUuy8EQh"}]' | things-cli batch
 ```
 
+`--scheduled` uses the local calendar date: future dates appear in Upcoming,
+while today and past dates use the Today/Anytime schedule. If `--when` is also
+provided, its schedule takes precedence and `--scheduled` still supplies the
+date. For batch creates, pass the date as
+`"extra":{"scheduled":"YYYY-MM-DD"}`.
+
 ### Examples
+
+Write commands reject invalid relationship identifiers, schedule/type names, and calendar dates before sending a commit. Tag IDs must be canonical Base58 with no surrounding whitespace. Batch input is validated in full before its single commit; see [CLI write validation](cmd/README.md#write-validation) for supported options and batch `extra` rules.
 
 ```bash
 # Create a project with tasks
@@ -302,6 +310,27 @@ func main() {
 }
 ```
 
+### Task7 writes, reads, and recovery
+
+The CLI uses Task7 for validated ordinary task, project, and heading creation and modification. `History.Write` also accepts explicit `ItemKindTask7` envelopes within that scope. It checks existing update targets against raw history and rejects recurring or unknown targets before posting. This adds a history read for update requests. Direct recurrence configuration, note-delta writes, and Task7 deletion events remain unsupported; other entity formats, including Tombstone2 purge, are unchanged.
+
+Older or sparse task histories that never explicitly establish `rr`, `rp`, and `rt` are also rejected by CLI updates, even when the task may be ordinary. This is a compatibility limit of the first Task7 rollout: the checker does not guess missing recurrence state and does not silently retry through Task6.
+
+Existing SDK callers retain `ItemKindTask == "Task6"` and their previous write behavior. The readers accept both versions and older task kinds. Migrating outgoing writes does not rewrite stored tasks or history. See [Task7 write policy](docs/task7-write-policy.md) for the exact boundary, SDK usage, and mixed-version live evidence.
+
+The first read after this upgrade replays state built by an older task reader:
+
+- `things-cli` saves the old JSON cache as `<cache-path>.before-replay-<random>.bak`, then atomically replaces the cache after successful replay.
+- The SQLite sync engine keeps opening databases offline. On the next `Sync()`, it detects the old replay generation even if the cursor is already at the cloud head. It creates a consistent `<database-path>.task7-backup-<random>` backup, rebuilds derived state in memory, and installs it in one transaction.
+- Existing SQLite change-log rows, IDs, and timestamps are retained. Historical replay below the old cursor produces no duplicate log entries or notifications. Old Task7 `UnknownChange` rows remain audit evidence; newly fetched events after that cursor are logged normally.
+- Failed or incomplete replay leaves the existing database/cache available for retry. Backups are kept with owner-only permissions. Each SQLite attempt snapshots the current database; identical validated snapshots are deduplicated by full content so repeated failures do not accumulate identical backups. Staging requires memory proportional to the rebuilt state, and each attempt needs temporary free space for a full database snapshot.
+
+Call `Sync()` before relying on database queries after upgrading: `Open()` does not perform network recovery. A future unsupported task kind returns an incomplete-sync error instead of silently advancing the cursor. Diagnostics do not include task payloads.
+
+CLI cache writes use atomic replacement and optimistic change detection, not a cross-process lock. Concurrent readers can replace one another's complete cache snapshots; a later read catches up from the saved cursor. Give concurrent consumers distinct `THINGS_CLI_CACHE` paths if they must not share cache writes. SQLite recovery separately checks its saved metadata within the installation transaction.
+
+Scheduled dates now use `sr` only; `tir` is a separate Today ordering reference date. Omitted task fields preserve prior values, while explicit nulls clear supported nullable dates, notes, and relationships. Modern repeater (`rp`) semantics remain incompletely verified; unknown wire fields remain available in raw `Item.P` and are not newly interpreted by the task model. The existing `ReminderDate` API field tagged `rmd` is a legacy misnomer for repeater migration date.
+
 ### Semantic Change Types
 
 The sync engine detects 40+ semantic change types:
@@ -368,7 +397,7 @@ Key findings from reverse engineering the Things Cloud sync protocol:
 - **Status field (`ss`)**: `0` = Pending, `2` = Canceled, `3` = Completed. Don't confuse with `st` (schedule)!
 - **Headings (`tp=2`) must have `st=1`** (anytime). `st=0` (inbox) crashes Things.app.
 - **Tasks in projects, headings, or areas** should default to `st=1` (anytime) — they've been triaged out of inbox.
-- **Kind strings**: `Task6`, `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2`
+- **Kind strings**: `Task7` for verified CLI task writes; `Task6` remains supported for existing SDK callers; `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2` for other entities.
 
 Since v0.3.0 the SDK enforces the identifier rules instead of trusting callers: `things.NewUUID()` generates canonical Base58 identifiers (one leading `1` per leading zero byte — a subtlety whose absence used to corrupt ~1 in 256 creates), `things.ValidateUUID()` checks any identifier, and `History.Write()` refuses items with invalid or duplicate UUIDs before anything reaches the server.
 

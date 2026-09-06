@@ -2,7 +2,6 @@ package memory
 
 import (
 	"encoding/json"
-	// "fmt"
 	"sort"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -147,25 +146,6 @@ func (s *State) updateTask(item things.TaskActionItem) *things.Task {
 		ids := *item.P.ParentTaskIDs
 		t.ParentTaskIDs = ids
 	}
-	if item.P.Note != nil {
-		var noteStr string
-		if err := json.Unmarshal(item.P.Note, &noteStr); err == nil {
-			t.Note = noteStr
-		} else {
-			var note things.Note
-			if err := json.Unmarshal(item.P.Note, &note); err == nil {
-				switch note.Type {
-				case things.NoteTypeFullText:
-					t.Note = note.Value
-				case things.NoteTypeDelta:
-					t.Note = things.ApplyPatches(t.Note, note.Patches)
-				}
-			}
-		}
-	}
-	if item.P.Title != nil {
-		t.Title = *item.P.Title
-	}
 	if item.P.AlarmTimeOffset != nil {
 		t.AlarmTimeOffset = item.P.AlarmTimeOffset
 	}
@@ -256,7 +236,74 @@ func (s *State) updateTag(item things.TagActionItem) *things.Tag {
 
 // Update applies all items to update the aggregated state
 func (s *State) Update(items ...things.Item) error {
-	for _, rawItem := range items {
+	if err := things.ValidateTaskReadKinds(items); err != nil {
+		return err
+	}
+
+	// Decode every task create/modify before applying any item. A malformed
+	// task payload late in the batch must not leave earlier mutations behind,
+	// especially note deltas that would be applied twice on retry.
+	taskPayloads := make([]things.TaskReadPayload, len(items))
+	decodedTaskPayload := make([]bool, len(items))
+	resolvedTaskNotes := make([]string, len(items))
+	resolvedTaskNote := make([]bool, len(items))
+	type noteState struct {
+		value  string
+		exists bool
+	}
+	notes := make(map[string]noteState)
+	for i, rawItem := range items {
+		switch rawItem.Kind {
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+			legacy := isLegacyItemKind(rawItem.Kind)
+			id := rawItem.UUID
+			if legacy && things.ValidateUUID(id) != nil {
+				id = things.EncodeLegacyIdentifier(id)
+			}
+			if rawItem.Action == things.ItemActionDeleted {
+				notes[id] = noteState{}
+				continue
+			}
+			if rawItem.Action != things.ItemActionCreated && rawItem.Action != things.ItemActionModified {
+				continue
+			}
+			payload, err := things.DecodeTaskReadPayload(rawItem.P)
+			if err != nil {
+				return err
+			}
+			taskPayloads[i] = payload
+			decodedTaskPayload[i] = true
+
+			current := ""
+			if state, ok := notes[id]; ok {
+				if state.exists {
+					current = state.value
+				}
+			} else if task := s.Tasks[id]; task != nil {
+				current = task.Note
+			}
+			resolved, err := payload.ResolveNote(current)
+			if err != nil {
+				return err
+			}
+			resolvedTaskNotes[i] = resolved
+			resolvedTaskNote[i] = true
+			notes[id] = noteState{value: resolved, exists: true}
+
+		case things.ItemKindTombstone, things.ItemKindTombstonePlain:
+			var payload things.TombstoneActionItemPayload
+			if err := json.Unmarshal(rawItem.P, &payload); err != nil {
+				continue
+			}
+			oid := payload.DeletedObjectID
+			if isLegacyItemKind(rawItem.Kind) && things.ValidateUUID(oid) != nil {
+				oid = things.EncodeLegacyIdentifier(oid)
+			}
+			notes[oid] = noteState{}
+		}
+	}
+
+	for i, rawItem := range items {
 		legacy := isLegacyItemKind(rawItem.Kind)
 		// A legacy-kind item whose key already parses as canonical Base58
 		// carries a current-generation identifier and must not be re-derived
@@ -267,10 +314,12 @@ func (s *State) Update(items ...things.Item) error {
 		}
 
 		switch rawItem.Kind {
-		case things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
 			item := things.TaskActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip items that can't be parsed
+			var payload things.TaskReadPayload
+			if decodedTaskPayload[i] {
+				payload = taskPayloads[i]
+				item.P = payload.TaskActionItemPayload
 			}
 			if legacy {
 				encodeLegacyTaskReferences(&item.P)
@@ -280,7 +329,12 @@ func (s *State) Update(items ...things.Item) error {
 			case things.ItemActionCreated:
 				fallthrough
 			case things.ItemActionModified:
-				s.Tasks[item.UUID()] = s.updateTask(item)
+				task := s.updateTask(item)
+				if resolvedTaskNote[i] {
+					task.Note = resolvedTaskNotes[i]
+				}
+				payload.ApplyNulls(task)
+				s.Tasks[item.UUID()] = task
 			case things.ItemActionDeleted:
 				delete(s.Tasks, item.UUID())
 			default:

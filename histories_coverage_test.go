@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// asHTTPError reports whether err (or a wrapped error) is an *HTTPError, and if
-// so stores it in *target.
-func asHTTPError(err error, target **HTTPError) bool {
-	return errors.As(err, target)
-}
-
 func TestClient_History(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		t.Parallel()
@@ -58,7 +52,7 @@ func TestClient_History(t *testing.T) {
 		c := New(server.URL, "martin@example.com", "")
 		_, err := c.History("id")
 		var httpErr *HTTPError
-		if !asHTTPError(err, &httpErr) {
+		if !errors.As(err, &httpErr) {
 			t.Fatalf("History err = %v, want *HTTPError", err)
 		}
 		if httpErr.StatusCode != http.StatusInternalServerError {
@@ -142,7 +136,7 @@ func TestHistory_Sync_ErrorStatus(t *testing.T) {
 	h := History{Client: c, ID: "id"}
 	err := h.Sync()
 	var httpErr *HTTPError
-	if !asHTTPError(err, &httpErr) {
+	if !errors.As(err, &httpErr) {
 		t.Fatalf("Sync err = %v, want *HTTPError", err)
 	}
 }

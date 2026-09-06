@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,6 +42,8 @@ type writeEnvelope struct {
 	kind    string
 	payload any
 }
+
+const task7WriteKind = "Task7"
 
 func (w writeEnvelope) UUID() string { return w.id }
 
@@ -140,19 +143,54 @@ func generateUUID() string {
 // identifier. Invalid identifiers written to the cloud poison the sync
 // history irreparably, so they must be rejected before any write.
 func validateIdentifierOpts(opts map[string]string) error {
-	for _, key := range []string{"uuid", "project", "heading", "area"} {
-		if v, ok := opts[key]; ok && v != "" {
+	for _, key := range []string{"uuid", "project", "heading", "area", "parent"} {
+		if v, ok := opts[key]; ok {
 			if err := thingscloud.ValidateUUID(v); err != nil {
 				return fmt.Errorf("--%s: %w", key, err)
 			}
 		}
 	}
-	if v, ok := opts["tags"]; ok && v != "" {
+	if v, ok := opts["tags"]; ok {
 		for _, tag := range strings.Split(v, ",") {
-			if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+			if err := thingscloud.ValidateUUID(tag); err != nil {
 				return fmt.Errorf("--tags: %w", err)
 			}
 		}
+	}
+	return nil
+}
+
+// validateTaskOpts runs before building a task payload so unsupported values
+// cannot silently fall back to a default or omit a requested update.
+func validateTaskOpts(opts map[string]string) error {
+	if err := validateIdentifierOpts(opts); err != nil {
+		return err
+	}
+	if v, ok := opts["when"]; ok {
+		switch v {
+		case "today", "anytime", "someday", "inbox":
+		default:
+			return fmt.Errorf("--when: %q is invalid; expected today, anytime, someday, or inbox", v)
+		}
+	}
+	if v, ok := opts["type"]; ok {
+		switch v {
+		case "task", "project", "heading":
+		default:
+			return fmt.Errorf("--type: %q is invalid; expected task, project, or heading", v)
+		}
+	}
+	for _, key := range []string{"deadline", "scheduled"} {
+		if v, ok := opts[key]; ok && parseDate(v) == nil {
+			return fmt.Errorf("--%s: %q is invalid; expected a calendar date in YYYY-MM-DD format", key, v)
+		}
+	}
+	return nil
+}
+
+func validateEditContainers(area, project, heading string) error {
+	if area != "" && (project != "" || heading != "") {
+		return fmt.Errorf("--area cannot be combined with --project or --heading when editing a task")
 	}
 	return nil
 }
@@ -172,7 +210,7 @@ func validateBatchOpIdentifiers(op BatchOp) error {
 		}
 	}
 	for _, tag := range op.Tags {
-		if err := thingscloud.ValidateUUID(strings.TrimSpace(tag)); err != nil {
+		if err := thingscloud.ValidateUUID(tag); err != nil {
 			return fmt.Errorf("tags: %w", err)
 		}
 	}
@@ -186,6 +224,13 @@ func nowTs() float64 {
 func todayMidnightUTC() int64 {
 	now := time.Now()
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+}
+
+func taskScheduleForDate(scheduledDate, today int64) int {
+	if scheduledDate > today {
+		return 2
+	}
+	return 1
 }
 
 func parseDate(s string) *time.Time {
@@ -315,14 +360,15 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 		}
 	}
 
-	// --scheduled (overrides sr/tir; sets st=1 with dates if not already set by --when)
+	// --scheduled overrides sr/tir. Without --when, future dates are Upcoming
+	// (st=2), while today and past dates use Today/Anytime (st=1).
 	if v, ok := opts["scheduled"]; ok {
 		if t := parseDate(v); t != nil {
 			ts := t.Unix()
 			sr = &ts
 			tir = &ts
 			if _, hasWhen := opts["when"]; !hasWhen {
-				st = 1 // default to anytime+date
+				st = taskScheduleForDate(ts, todayMidnightUTC())
 			}
 		}
 	}
@@ -330,8 +376,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --project
 	if v, ok := opts["project"]; ok && v != "" {
 		pr = []string{v}
-		// Tasks in projects are already triaged — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks in projects are already triaged — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -339,8 +386,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --heading
 	if v, ok := opts["heading"]; ok && v != "" {
 		agr = []string{v}
-		// Tasks under headings are structural — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks under headings are structural — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -348,8 +396,9 @@ func newTaskCreatePayload(title string, opts map[string]string) TaskCreatePayloa
 	// --area
 	if v, ok := opts["area"]; ok && v != "" {
 		ar = []string{v}
-		// Tasks in areas are already triaged — auto-set anytime (st=1) unless --when was explicit
-		if _, hasWhen := opts["when"]; !hasWhen {
+		// Tasks in areas are already triaged — auto-set anytime (st=1)
+		// unless the caller supplied a schedule.
+		if !hasExplicitSchedule(opts) {
 			st = 1
 		}
 	}
@@ -468,7 +517,7 @@ func (u *taskUpdate) Inbox() *taskUpdate {
 }
 
 func (u *taskUpdate) ScheduleDate(ts int64) *taskUpdate {
-	return u.Schedule(1, ts, ts)
+	return u.Schedule(taskScheduleForDate(ts, todayMidnightUTC()), ts, ts)
 }
 
 func (u *taskUpdate) Deadline(dd int64) *taskUpdate {
@@ -484,11 +533,15 @@ func (u *taskUpdate) Scheduled(sr, tir int64) *taskUpdate {
 
 func (u *taskUpdate) Area(uuid string) *taskUpdate {
 	u.fields["ar"] = []string{uuid}
+	u.fields["pr"] = []string{}
+	u.fields["agr"] = []string{}
 	return u
 }
 
 func (u *taskUpdate) Project(uuid string) *taskUpdate {
 	u.fields["pr"] = []string{uuid}
+	u.fields["ar"] = []string{}
+	u.fields["agr"] = []string{}
 	return u
 }
 
@@ -519,7 +572,7 @@ type cliContext struct {
 // state. Caches with any other version are ignored, forcing a full replay.
 // Bump it whenever replay output changes for the same history, e.g. when
 // object keys or memory.State's representation change.
-const cliStateCacheVersion = 1
+const cliStateCacheVersion = thingscloud.TaskReplayVersion
 
 type cliStateCache struct {
 	Version     int           `json:"version"`
@@ -548,12 +601,14 @@ func cliStateCachePath() string {
 }
 
 func loadCLIStateCache(path string) (*cliStateCache, error) {
-	bs, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	cache, _, err := loadCLIStateCacheSnapshot(path)
+	return cache, err
+}
+
+func loadCLIStateCacheSnapshot(path string) (*cliStateCache, []byte, error) {
+	bs, err := readCLIStateCacheFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var cache cliStateCache
 	if err := json.Unmarshal(bs, &cache); err != nil {
@@ -561,17 +616,17 @@ func loadCLIStateCache(path string) (*cliStateCache, error) {
 		// partial write) degrades to a full replay, same as a version
 		// mismatch, instead of an error the user can only clear by deleting
 		// the file by hand.
-		return nil, nil
+		return nil, bs, nil
 	}
 	if cache.Version != cliStateCacheVersion {
-		return nil, nil
+		return nil, bs, nil
 	}
 	if cache.State == nil {
 		cache.State = memory.NewState()
 	} else {
 		normalizeMemoryState(cache.State)
 	}
-	return &cache, nil
+	return &cache, bs, nil
 }
 
 func normalizeMemoryState(state *memory.State) {
@@ -590,15 +645,11 @@ func normalizeMemoryState(state *memory.State) {
 }
 
 func saveCLIStateCache(path string, cache *cliStateCache) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	cache.Version = cliStateCacheVersion
-	bs, err := json.MarshalIndent(cache, "", "  ")
+	previous, err := readCLIStateCacheFile(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, bs, 0o600)
+	return saveCLIStateCacheSnapshot(path, cache, previous)
 }
 
 func initCLI(syncHistoryHead bool) *cliContext {
@@ -641,7 +692,7 @@ func (ctx *cliContext) serverIndex() int {
 
 func (ctx *cliContext) loadState() *memory.State {
 	cachePath := cliStateCachePath()
-	cache, err := loadCLIStateCache(cachePath)
+	cache, previous, err := loadCLIStateCacheSnapshot(cachePath)
 	if err != nil {
 		fatal("load state cache", err)
 	}
@@ -665,6 +716,12 @@ func (ctx *cliContext) loadState() *memory.State {
 		if err != nil {
 			fatal("fetch items", err)
 		}
+		if ctx.history.LoadedServerIndex <= startIndex {
+			fatalf("incomplete history: item page made no progress")
+		}
+		if ctx.history.LatestServerIndex < latestServerIndex || ctx.history.LoadedServerIndex > ctx.history.LatestServerIndex {
+			fatalf("incomplete history: inconsistent server cursor during replay")
+		}
 		if err := state.Update(items...); err != nil {
 			fatal("update state", err)
 		}
@@ -674,11 +731,11 @@ func (ctx *cliContext) loadState() *memory.State {
 		}
 	}
 
-	if err := saveCLIStateCache(cachePath, &cliStateCache{
+	if err := saveCLIStateCacheSnapshot(cachePath, &cliStateCache{
 		HistoryID:   ctx.history.ID,
 		ServerIndex: startIndex,
 		State:       state,
-	}); err != nil {
+	}, previous); err != nil {
 		fatal("save state cache", err)
 	}
 
@@ -931,7 +988,7 @@ func cmdCreate(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
-	if err := validateIdentifierOpts(opts); err != nil {
+	if err := validateTaskOpts(opts); err != nil {
 		fatal("create task", err)
 	}
 
@@ -941,7 +998,7 @@ func cmdCreate(history *thingscloud.History, args []string) {
 	}
 
 	payload := newTaskCreatePayload(title, opts)
-	env := writeEnvelope{id: taskUUID, action: 0, kind: "Task6", payload: payload}
+	env := writeEnvelope{id: taskUUID, action: 0, kind: task7WriteKind, payload: payload}
 	if err := history.Write(env); err != nil {
 		fatal("create task", err)
 	}
@@ -974,7 +1031,10 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
 		fatal("edit", err)
 	}
-	if err := validateIdentifierOpts(opts); err != nil {
+	if err := validateTaskOpts(opts); err != nil {
+		fatal("edit", err)
+	}
+	if err := validateEditContainers(opts["area"], opts["project"], opts["heading"]); err != nil {
 		fatal("edit", err)
 	}
 
@@ -1041,7 +1101,7 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 		u.Tags(strings.Split(v, ","))
 	}
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("edit task", err)
 	}
@@ -1053,7 +1113,7 @@ func cmdComplete(history *thingscloud.History, taskUUID string) {
 	ts := nowTs()
 	u := newTaskUpdate().Status(3).StopDate(ts)
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("complete task", err)
 	}
@@ -1064,7 +1124,7 @@ func cmdComplete(history *thingscloud.History, taskUUID string) {
 func cmdTrash(history *thingscloud.History, taskUUID string) {
 	u := newTaskUpdate().Trash(true)
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("trash task", err)
 	}
@@ -1073,6 +1133,9 @@ func cmdTrash(history *thingscloud.History, taskUUID string) {
 }
 
 func cmdPurge(history *thingscloud.History, taskUUID string) {
+	if err := thingscloud.ValidateUUID(taskUUID); err != nil {
+		fatal("purge uuid", err)
+	}
 	tombstoneUUID := generateUUID()
 	payload := map[string]any{
 		"dloid": taskUUID,
@@ -1090,7 +1153,7 @@ func cmdPurge(history *thingscloud.History, taskUUID string) {
 func cmdMoveToToday(history *thingscloud.History, taskUUID string) {
 	u := newTaskUpdate().Today()
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("move to today", err)
 	}
@@ -1103,6 +1166,9 @@ func cmdCreateArea(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create area", err)
+	}
 
 	areaUUID := opts["uuid"]
 	if areaUUID == "" {
@@ -1134,6 +1200,9 @@ func cmdCreateTag(history *thingscloud.History, args []string) {
 
 	title := args[0]
 	opts := parseArgs(args[1:])
+	if err := validateIdentifierOpts(opts); err != nil {
+		fatal("create tag", err)
+	}
 
 	tagUUID := opts["uuid"]
 	if tagUUID == "" {
@@ -1184,14 +1253,20 @@ type BatchOp struct {
 	Heading  string            `json:"heading,omitempty"`
 	Tags     []string          `json:"tags,omitempty"`
 	Type     string            `json:"type,omitempty"`
-	Extra    map[string]string `json:"extra,omitempty"` // for any additional opts
+	Extra    map[string]string `json:"extra,omitempty"` // supported create options; overrides top-level values
 }
 
 func cmdBatch(history *thingscloud.History) {
 	// Read JSON from stdin
 	var ops []BatchOp
-	if err := json.NewDecoder(os.Stdin).Decode(&ops); err != nil {
+	decoder := json.NewDecoder(os.Stdin)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&ops); err != nil {
 		fatalf("parsing batch JSON: %v", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fatalf("parsing batch JSON: expected a single array with no trailing input")
 	}
 
 	if len(ops) == 0 {
@@ -1224,6 +1299,9 @@ func cmdBatch(history *thingscloud.History) {
 }
 
 func buildBatchEnvelope(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
+	if op.Cmd != "create" && op.Extra != nil {
+		return nil, nil, fmt.Errorf("extra options are only supported for create")
+	}
 	switch op.Cmd {
 	case "create":
 		return buildBatchCreate(op)
@@ -1286,11 +1364,19 @@ func buildBatchCreate(op BatchOp) (thingscloud.Identifiable, map[string]string, 
 		opts["type"] = op.Type
 	}
 	for k, v := range op.Extra {
-		opts[k] = v
+		switch k {
+		case "note", "when", "deadline", "scheduled", "project", "area", "heading", "tags", "type":
+			opts[k] = v
+		default:
+			return nil, nil, fmt.Errorf("unsupported create extra option: %s", k)
+		}
+	}
+	if err := validateTaskOpts(opts); err != nil {
+		return nil, nil, err
 	}
 
 	payload := newTaskCreatePayload(op.Title, opts)
-	env := writeEnvelope{id: taskUUID, action: 0, kind: "Task6", payload: payload}
+	env := writeEnvelope{id: taskUUID, action: 0, kind: task7WriteKind, payload: payload}
 
 	return env, map[string]string{"cmd": "create", "uuid": taskUUID, "title": op.Title}, nil
 }
@@ -1302,7 +1388,7 @@ func buildBatchComplete(op BatchOp) (thingscloud.Identifiable, map[string]string
 
 	ts := nowTs()
 	u := newTaskUpdate().Status(3).StopDate(ts)
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "complete", "uuid": op.UUID}, nil
 }
@@ -1313,7 +1399,7 @@ func buildBatchTrash(op BatchOp) (thingscloud.Identifiable, map[string]string, e
 	}
 
 	u := newTaskUpdate().Trash(true)
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "trash", "uuid": op.UUID}, nil
 }
@@ -1321,6 +1407,9 @@ func buildBatchTrash(op BatchOp) (thingscloud.Identifiable, map[string]string, e
 func buildBatchPurge(op BatchOp) (thingscloud.Identifiable, map[string]string, error) {
 	if op.UUID == "" {
 		return nil, nil, fmt.Errorf("purge requires uuid")
+	}
+	if err := thingscloud.ValidateUUID(op.UUID); err != nil {
+		return nil, nil, fmt.Errorf("uuid: %w", err)
 	}
 
 	tombstoneUUID := generateUUID()
@@ -1339,7 +1428,7 @@ func buildBatchMoveToToday(op BatchOp) (thingscloud.Identifiable, map[string]str
 	}
 
 	u := newTaskUpdate().Today()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-today", "uuid": op.UUID}, nil
 }
@@ -1356,7 +1445,7 @@ func buildBatchMoveToProject(op BatchOp) (thingscloud.Identifiable, map[string]s
 	}
 
 	u := newTaskUpdate().Project(op.Project).Anytime()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-project", "uuid": op.UUID, "project": op.Project}, nil
 }
@@ -1373,7 +1462,7 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 	}
 
 	u := newTaskUpdate().Area(op.Area).Anytime()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-area", "uuid": op.UUID, "area": op.Area}, nil
 }
@@ -1383,6 +1472,19 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 		return nil, nil, fmt.Errorf("edit requires uuid")
 	}
 	if err := validateBatchOpIdentifiers(op); err != nil {
+		return nil, nil, err
+	}
+	opts := make(map[string]string)
+	if op.When != "" {
+		opts["when"] = op.When
+	}
+	if op.Deadline != "" {
+		opts["deadline"] = op.Deadline
+	}
+	if err := validateTaskOpts(opts); err != nil {
+		return nil, nil, err
+	}
+	if err := validateEditContainers(op.Area, op.Project, op.Heading); err != nil {
 		return nil, nil, err
 	}
 
@@ -1433,7 +1535,7 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 		u.Tags(op.Tags)
 	}
 
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "edit", "uuid": op.UUID}, nil
 }
@@ -1473,6 +1575,9 @@ Write commands (fast — skip state loading):
   edit <uuid> [--title ...] [--note ...] [--when ...] [--deadline ...]
          [--scheduled ...] [--area UUID] [--project UUID]
          [--heading UUID] [--tags UUID,...]
+
+  --scheduled uses Upcoming for future local dates and Today/Anytime for today
+  or past dates. An explicit --when takes precedence over that classification.
   complete <uuid>
   trash <uuid>
   purge <uuid>
@@ -1481,11 +1586,12 @@ Write commands (fast — skip state loading):
 Batch command (reads JSON from stdin, sends all ops in one HTTP request):
   batch
 
-  Example: echo '[{"cmd":"complete","uuid":"abc"},{"cmd":"trash","uuid":"def"}]' | things-cli batch
+  Example: echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":"VJ1edXTP9q3PmFDUuy8EQh"}]' | things-cli batch
 
   Supported operations:
     {"cmd": "create", "title": "...", "note": "...", "when": "today|anytime|someday|inbox",
-     "project": "uuid", "area": "uuid", "heading": "uuid", "tags": ["uuid",...]}
+     "project": "uuid", "area": "uuid", "heading": "uuid", "tags": ["uuid",...],
+     "extra": {"scheduled": "YYYY-MM-DD"}}
     {"cmd": "complete", "uuid": "..."}
     {"cmd": "trash", "uuid": "..."}
     {"cmd": "purge", "uuid": "..."}

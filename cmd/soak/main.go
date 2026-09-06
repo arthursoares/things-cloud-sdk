@@ -17,7 +17,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -324,5 +323,3 @@ func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "soak: "+msg)
 	os.Exit(1)
 }
-
-var _ = bufio.NewReader // reserved for future interactive confirm

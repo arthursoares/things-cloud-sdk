@@ -1,5 +1,10 @@
 package thingscloud
 
+import (
+	"fmt"
+	"unicode/utf8"
+)
+
 // NoteTypeFullText indicates a note with complete text
 const NoteTypeFullText = 1
 
@@ -23,36 +28,51 @@ type Note struct {
 	Patches  []NotePatch `json:"ps,omitempty"`
 }
 
-// ApplyPatches applies a series of text patches to an original string
+// ApplyPatches applies a series of text patches using UTF-8 byte offsets.
 func ApplyPatches(original string, patches []NotePatch) string {
-	runes := []rune(original)
-	for _, p := range patches {
-		if p.Position < 0 {
-			p.Position = 0
-		}
-		if p.Position > len(runes) {
-			p.Position = len(runes)
-		}
-		end := p.Position + p.Length
-		if end > len(runes) {
-			end = len(runes)
-		}
-		if end < p.Position {
-			// Negative length in a corrupt/hostile patch: treat as a
-			// pure insertion instead of slicing out of bounds.
-			end = p.Position
-		}
-		actualLength := end - p.Position
-		replacementRunes := []rune(p.Replacement)
-		newCap := len(runes) - actualLength + len(replacementRunes)
-		if newCap < 0 {
-			newCap = len(replacementRunes)
-		}
-		result := make([]rune, 0, newCap)
-		result = append(result, runes[:p.Position]...)
-		result = append(result, replacementRunes...)
-		result = append(result, runes[end:]...)
-		runes = result
+	result, _ := applyPatches(original, patches, false)
+	return result
+}
+
+// ApplyPatchesChecked applies byte-offset patches and rejects any patch that
+// leaves the note in an invalid UTF-8 state. ApplyPatches remains available for
+// callers that rely on its historical unchecked behavior.
+func ApplyPatchesChecked(original string, patches []NotePatch) (string, error) {
+	return applyPatches(original, patches, true)
+}
+
+func applyPatches(original string, patches []NotePatch, validateUTF8 bool) (string, error) {
+	if validateUTF8 && !utf8.ValidString(original) {
+		return "", fmt.Errorf("original note is not valid UTF-8")
 	}
-	return string(runes)
+
+	text := []byte(original)
+	for i, p := range patches {
+		position := p.Position
+		if position < 0 {
+			position = 0
+		}
+		if position > len(text) {
+			position = len(text)
+		}
+
+		length := p.Length
+		if length < 0 {
+			length = 0
+		}
+		remaining := len(text) - position
+		if length > remaining {
+			length = remaining
+		}
+		end := position + length
+
+		result := append([]byte(nil), text[:position]...)
+		result = append(result, p.Replacement...)
+		result = append(result, text[end:]...)
+		if validateUTF8 && !utf8.Valid(result) {
+			return "", fmt.Errorf("note patch %d produced invalid UTF-8", i)
+		}
+		text = result
+	}
+	return string(text), nil
 }

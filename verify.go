@@ -28,10 +28,10 @@ type VerifyResponse struct {
 // Verify checks that the provided API credentials are valid.
 func (c *Client) Verify() (*VerifyResponse, error) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("/version/1/account/%s", c.EMail), nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Authorization", fmt.Sprintf("Password %s", c.password))
 	resp, err := c.do(req)
 	if err != nil {
 		return nil, err

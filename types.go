@@ -59,7 +59,10 @@ var (
 	ItemKindChecklistItem2 ItemKind = "ChecklistItem2"
 	ItemKindChecklistItem3 ItemKind = "ChecklistItem3"
 	// ItemKindTask identifies a Task or Subtask
-	ItemKindTask      ItemKind = "Task6"
+	ItemKindTask ItemKind = "Task6"
+	// ItemKindTask7 identifies the explicitly validated Task7 read/write scope.
+	// ItemKindTask remains Task6 for compatibility with existing callers.
+	ItemKindTask7     ItemKind = "Task7"
 	ItemKindTask4     ItemKind = "Task4"
 	ItemKindTask3     ItemKind = "Task3"
 	ItemKindTaskPlain ItemKind = "Task"
@@ -241,7 +244,7 @@ type TaskActionItemPayload struct {
 	SubtaskBehavior           *int                   `json:"sb,omitempty"`
 	DelegateIDs               *[]string              `json:"dl,omitempty"`
 	LastActionItemID          *Timestamp             `json:"lai,omitempty"`
-	ReminderDate              *Timestamp             `json:"rmd,omitempty"`
+	ReminderDate              *Timestamp             `json:"rmd,omitempty"` // legacy API name: repeater migration date, not a reminder
 	AlarmTimeOffset           *int                   `json:"ato,omitempty"`
 	ActionRequiredDate        *Timestamp             `json:"acrd,omitempty"`
 	DeadlineSuppression       *Timestamp             `json:"dds,omitempty"`
