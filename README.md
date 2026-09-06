@@ -180,6 +180,8 @@ echo '[{"cmd":"complete","uuid":"BXmAcvS6yK1eDhW31MuZrL"},{"cmd":"trash","uuid":
 
 ### Examples
 
+Write commands reject invalid relationship identifiers, schedule/type names, and calendar dates before sending a commit. Tag IDs must be canonical Base58 with no surrounding whitespace. Batch input is validated in full before its single commit; see [CLI write validation](cmd/README.md#write-validation) for supported options and batch `extra` rules.
+
 ```bash
 # Create a project with tasks
 things-cli create "My Project" --type project --when anytime
