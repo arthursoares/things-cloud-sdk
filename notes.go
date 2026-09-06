@@ -23,36 +23,32 @@ type Note struct {
 	Patches  []NotePatch `json:"ps,omitempty"`
 }
 
-// ApplyPatches applies a series of text patches to an original string
+// ApplyPatches applies a series of text patches using UTF-8 byte offsets.
 func ApplyPatches(original string, patches []NotePatch) string {
-	runes := []rune(original)
+	text := []byte(original)
 	for _, p := range patches {
-		if p.Position < 0 {
-			p.Position = 0
+		position := p.Position
+		if position < 0 {
+			position = 0
 		}
-		if p.Position > len(runes) {
-			p.Position = len(runes)
+		if position > len(text) {
+			position = len(text)
 		}
-		end := p.Position + p.Length
-		if end > len(runes) {
-			end = len(runes)
+
+		length := p.Length
+		if length < 0 {
+			length = 0
 		}
-		if end < p.Position {
-			// Negative length in a corrupt/hostile patch: treat as a
-			// pure insertion instead of slicing out of bounds.
-			end = p.Position
+		remaining := len(text) - position
+		if length > remaining {
+			length = remaining
 		}
-		actualLength := end - p.Position
-		replacementRunes := []rune(p.Replacement)
-		newCap := len(runes) - actualLength + len(replacementRunes)
-		if newCap < 0 {
-			newCap = len(replacementRunes)
-		}
-		result := make([]rune, 0, newCap)
-		result = append(result, runes[:p.Position]...)
-		result = append(result, replacementRunes...)
-		result = append(result, runes[end:]...)
-		runes = result
+		end := position + length
+
+		result := append([]byte(nil), text[:position]...)
+		result = append(result, p.Replacement...)
+		result = append(result, text[end:]...)
+		text = result
 	}
-	return string(runes)
+	return string(text)
 }
