@@ -19,10 +19,10 @@ import (
 )
 
 func oldReplayCache() []byte {
-	return []byte(`{"version":1,"historyId":"test-history","serverIndex":2,"state":{"Tasks":{}}}`)
+	return []byte(`{"version":2,"historyId":"test-history","serverIndex":2,"state":{"Tasks":{"BXmAcvS6yK1eDhW31MuZrL":{"UUID":"BXmAcvS6yK1eDhW31MuZrL","Title":"Native task","Note":"Native Task7 note α 🚀\nSecoUpdatene."}}}}`)
 }
 
-func TestCLIStateCacheRebuildsTask7AtHead(t *testing.T) {
+func TestCLIStateCacheRebuildsByteOffsetNotesAtHead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	old := oldReplayCache()
 	if err := os.WriteFile(path, old, 0o600); err != nil {
@@ -42,8 +42,9 @@ func TestCLIStateCacheRebuildsTask7AtHead(t *testing.T) {
 	c := things.New(server.URL, "test@example.com", "test-password")
 	ctx := cliContext{client: c, history: c.HistoryWithID("test-history")}
 	state := ctx.loadState()
-	if len(state.Tasks) != 1 || state.Tasks["BXmAcvS6yK1eDhW31MuZrL"] == nil || state.Tasks["BXmAcvS6yK1eDhW31MuZrL"].Title != "New task" {
-		t.Fatal("old caught-up cache was not rebuilt with the missing Task7 task")
+	task := state.Tasks["BXmAcvS6yK1eDhW31MuZrL"]
+	if len(state.Tasks) != 1 || task == nil || task.Title != "Native task" || task.Note != "Native Task7 note α 🚀\nUpdated line." {
+		t.Fatalf("old caught-up cache was not rebuilt with the byte-offset note: %+v", task)
 	}
 	if len(starts) != 1 || starts[0] != "0" {
 		t.Fatalf("replay starts = %v, want [0]", starts)
@@ -70,7 +71,7 @@ func TestCLIStateCacheRebuildsTask7AtHead(t *testing.T) {
 	}
 }
 
-const task7CachePage = `{"items":[{"BXmAcvS6yK1eDhW31MuZrL":{"e":"Task7","t":0,"p":{"tt":"","tp":0,"st":0,"ss":0}}},{"BXmAcvS6yK1eDhW31MuZrL":{"e":"Task7","t":1,"p":{"tt":"New task"}}}],"current-item-index":2}`
+const task7CachePage = `{"items":[{"BXmAcvS6yK1eDhW31MuZrL":{"e":"Task7","t":0,"p":{"tt":"Native task","tp":0,"st":0,"ss":0,"nt":{"t":1,"v":"Native Task7 note α 🚀\nSecond line."}}}},{"BXmAcvS6yK1eDhW31MuZrL":{"e":"Task7","t":1,"p":{"nt":{"t":2,"ps":[{"r":"Update","p":26,"l":5,"ch":3672733299}]}}}}],"current-item-index":2}`
 
 func TestCLIStateCacheReplacementFailurePreservesOriginal(t *testing.T) {
 	if os.Geteuid() == 0 {

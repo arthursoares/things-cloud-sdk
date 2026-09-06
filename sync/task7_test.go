@@ -366,6 +366,54 @@ func replayLog(t *testing.T, s *Syncer) []string {
 	return result
 }
 
+func TestTaskReplayGenerationTwoRebuildsByteOffsetNotes(t *testing.T) {
+	var starts []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/items") {
+			fmt.Fprint(w, `{"latest-server-index":2}`)
+			return
+		}
+		starts = append(starts, r.URL.Query().Get("start-index"))
+		fmt.Fprint(w, `{"items":[{"task":{"e":"Task7","t":0,"p":{"tt":"Native task","nt":{"t":1,"v":"Native Task7 note α 🚀\nSecond line."}}}},{"task":{"e":"Task7","t":1,"p":{"nt":{"t":2,"ps":[{"r":"Update","p":26,"l":5,"ch":3672733299}]}}}}],"current-item-index":2}`)
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "live.db")
+	s := legacyReplayDB(t, path, things.New(server.URL, "test@example.com", "password"), 2)
+	defer s.Close()
+	mustSaveTask(t, s, &things.Task{
+		UUID:  "task",
+		Title: "Native task",
+		Note:  "Native Task7 note α 🚀\nSecoUpdatene.",
+	})
+	if _, err := s.db.Exec(`UPDATE task_replay_state SET version=2 WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	before := replayLog(t, s)
+
+	changes, err := s.Sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.getTask("task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Note != "Native Task7 note α 🚀\nUpdated line." {
+		t.Fatalf("replayed note = %q", got.Note)
+	}
+	if len(changes) != 0 || !reflect.DeepEqual(before, replayLog(t, s)) {
+		t.Fatalf("caught-up recovery changed audit: changes=%v", changes)
+	}
+	generation, err := s.taskReplayVersion()
+	if err != nil || generation != things.TaskReplayVersion {
+		t.Fatalf("generation=%d err=%v", generation, err)
+	}
+	if !reflect.DeepEqual(starts, []string{"0"}) {
+		t.Fatalf("replay starts=%v", starts)
+	}
+}
+
 func TestTask7ReplayPreservesAuditAndReopens(t *testing.T) {
 	for _, cutoff := range []int{3, 4} {
 		t.Run(fmt.Sprint(cutoff), func(t *testing.T) {

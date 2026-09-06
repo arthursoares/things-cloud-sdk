@@ -45,6 +45,21 @@ func TestNote_ApplyPatch(t *testing.T) {
 	}
 }
 
+func TestNote_ApplyPatch_UsesUTF8ByteOffsets(t *testing.T) {
+	original := "Native Task7 note α 🚀\nSecond line."
+	patch := NotePatch{
+		Position:    26,
+		Length:      5,
+		Replacement: "Update",
+		Checksum:    3672733299,
+	}
+
+	result := ApplyPatches(original, []NotePatch{patch})
+	if result != "Native Task7 note α 🚀\nUpdated line." {
+		t.Errorf("expected native Task7 note replay, got %q", result)
+	}
+}
+
 func TestNote_ApplyPatch_PositionBeyondLength(t *testing.T) {
 	// Patch position is beyond the string — should not panic
 	result := ApplyPatches("", []NotePatch{{Position: 10, Length: 0, Replacement: "hello"}})
