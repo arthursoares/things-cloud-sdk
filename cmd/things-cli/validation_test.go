@@ -35,12 +35,13 @@ func TestCLIValidationHelper(t *testing.T) {
 }
 
 type cliValidationCloud struct {
-	server *httptest.Server
-	mu     sync.Mutex
-	bodies [][]byte
+	server       *httptest.Server
+	mu           sync.Mutex
+	bodies       [][]byte
+	historyReads int
 }
 
-func newCLIValidationCloud(t *testing.T) *cliValidationCloud {
+func newCLIValidationCloud(t *testing.T, ordinaryTaskIDs ...string) *cliValidationCloud {
 	t.Helper()
 	c := &cliValidationCloud{}
 	c.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +57,36 @@ func newCLIValidationCloud(t *testing.T) *cliValidationCloud {
 			c.mu.Unlock()
 			_, _ = io.WriteString(w, `{"server-head-index":2}`)
 		case strings.HasSuffix(r.URL.Path, "/items"):
-			_, _ = io.WriteString(w, `{"items":[],"current-item-index":1,"schema":301}`)
+			c.mu.Lock()
+			c.historyReads++
+			c.mu.Unlock()
+			items := []map[string]any{}
+			if len(ordinaryTaskIDs) > 0 {
+				created := make(map[string]any, len(ordinaryTaskIDs))
+				for _, id := range ordinaryTaskIDs {
+					created[id] = map[string]any{
+						"e": "Task7",
+						"t": 0,
+						"p": map[string]any{
+							"tt": "seeded ordinary task",
+							"tp": 0,
+							"st": 1,
+							"ss": 0,
+							"rr": nil,
+							"rp": nil,
+							"rt": []string{},
+						},
+					}
+				}
+				items = append(items, created)
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items":              items,
+				"current-item-index": 1,
+				"schema":             301,
+			}); err != nil {
+				t.Errorf("encode history fixture: %v", err)
+			}
 		case strings.Contains(r.URL.Path, "/account/"):
 			_, _ = io.WriteString(w, `{"email":"validation@example.com","status":"SYAccountStatusActive","history-key":"validation-history"}`)
 		default:
@@ -71,6 +101,12 @@ func (c *cliValidationCloud) commits() [][]byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([][]byte(nil), c.bodies...)
+}
+
+func (c *cliValidationCloud) historyReadCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.historyReads
 }
 
 func runValidationCLI(t *testing.T, cloud *cliValidationCloud, stdin string, args ...string) (int, string) {
@@ -128,6 +164,8 @@ func TestCLIWriteValidationRejectsInvalidInputBeforeCommit(t *testing.T) {
 		{"create padded tag", []string{"create", "Task", "--tags", " " + id + " "}, "", "tags"},
 		{"edit padded tag", []string{"edit", id, "--tags", " " + otherID + " "}, "", "tags"},
 		{"edit empty tags value", []string{"edit", id, "--tags", ""}, "", "tags"},
+		{"edit area with project", []string{"edit", id, "--area", id, "--project", otherID}, "", "area"},
+		{"edit area with heading", []string{"edit", id, "--area", id, "--heading", otherID}, "", "area"},
 		{"create invalid when", []string{"create", "Task", "--when", "tomorrow"}, "", "when"},
 		{"create empty when", []string{"create", "Task", "--when", ""}, "", "when"},
 		{"create missing when value", []string{"create", "Task", "--when"}, "", "when"},
@@ -158,6 +196,8 @@ func TestCLIWriteValidationRejectsInvalidInputBeforeCommit(t *testing.T) {
 		{"batch edit invalid when", []string{"batch"}, fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"when":"tomorrow"}]`, id), "when"},
 		{"batch edit invalid deadline", []string{"batch"}, fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"deadline":"bad-date"}]`, id), "deadline"},
 		{"batch edit padded tag", []string{"batch"}, fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"tags":[%q]}]`, id, " "+otherID+" "), "tags"},
+		{"batch edit area with project", []string{"batch"}, fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"area":%q,"project":%q}]`, id, id, otherID), "area"},
+		{"batch edit area with heading", []string{"batch"}, fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"area":%q,"heading":%q}]`, id, id, otherID), "area"},
 		{"batch extra project overrides valid field", []string{"batch"}, fmt.Sprintf(`[{"cmd":"create","title":"x","project":%q,"extra":{"project":"bad-project"}}]`, id), "project"},
 		{"batch extra empty project overrides valid field", []string{"batch"}, fmt.Sprintf(`[{"cmd":"create","title":"x","project":%q,"extra":{"project":""}}]`, id), "project"},
 		{"batch extra tags overrides valid field", []string{"batch"}, fmt.Sprintf(`[{"cmd":"create","title":"x","tags":[%q],"extra":{"tags":"bad-tag"}}]`, id), "tags"},
@@ -187,6 +227,9 @@ func TestCLIWriteValidationRejectsInvalidInputBeforeCommit(t *testing.T) {
 			}
 			if got := len(cloud.commits()); got != 0 {
 				t.Errorf("commit requests = %d, want 0", got)
+			}
+			if got := cloud.historyReadCount(); got != 1 {
+				t.Errorf("history reads = %d, want only the initial head sync and no write preflight", got)
 			}
 		})
 	}
@@ -236,7 +279,7 @@ func TestCLIWriteValidationAcceptsBatchDatesAndScheduledExtra(t *testing.T) {
 		{"cmd":"create","title":"dated","uuid":%q,"when":"someday","deadline":"2026-10-14","project":%q,"tags":[%q],"extra":{"when":"anytime","deadline":"2026-10-15","scheduled":"2026-10-12"}},
 		{"cmd":"edit","uuid":%q,"when":"someday","deadline":"2026-10-20"}
 	]`, createID, projectID, tagID, editID)
-	cloud := newCLIValidationCloud(t)
+	cloud := newCLIValidationCloud(t, editID)
 	exitCode, output := runValidationCLI(t, cloud, input, "batch")
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d: %s", exitCode, output)
@@ -259,21 +302,23 @@ func TestCLIWriteValidationAcceptsBatchDatesAndScheduledExtra(t *testing.T) {
 func TestCLIWriteValidationAcceptsUnsetBatchOptionals(t *testing.T) {
 	id := thingscloud.NewUUID()
 	tests := []struct {
-		name  string
-		input string
+		name            string
+		input           string
+		ordinaryTaskIDs []string
 	}{
 		{
-			"empty top-level strings without extra",
-			`[{"cmd":"create","title":"empty optionals","uuid":"","note":"","when":"","deadline":"","project":"","area":"","heading":"","tags":[],"type":""}]`,
+			name:  "empty top-level strings without extra",
+			input: `[{"cmd":"create","title":"empty optionals","uuid":"","note":"","when":"","deadline":"","project":"","area":"","heading":"","tags":[],"type":""}]`,
 		},
 		{
-			"null extra",
-			fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"title":"updated","extra":null}]`, id),
+			name:            "null extra",
+			input:           fmt.Sprintf(`[{"cmd":"edit","uuid":%q,"title":"updated","extra":null}]`, id),
+			ordinaryTaskIDs: []string{id},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cloud := newCLIValidationCloud(t)
+			cloud := newCLIValidationCloud(t, tc.ordinaryTaskIDs...)
 			exitCode, output := runValidationCLI(t, cloud, tc.input, "batch")
 			if exitCode != 0 {
 				t.Fatalf("exit code = %d: %s", exitCode, output)

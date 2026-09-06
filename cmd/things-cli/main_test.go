@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,64 @@ func TestTaskUpdateAnytimeClearsScheduleDates(t *testing.T) {
 	assertAnytimeSchedule(t, payload)
 	if got := payload["pr"]; got == nil {
 		t.Fatal("project field was not set")
+	}
+}
+
+func TestTaskContainerMoveReplayClearsPreviousContainer(t *testing.T) {
+	tests := []struct {
+		name       string
+		initial    string
+		update     map[string]any
+		wantArea   []string
+		wantParent []string
+	}{
+		{
+			name:       "project and heading to area",
+			initial:    fmt.Sprintf(`{"tt":"child","pr":[%q],"agr":[%q]}`, testProjectID, testHeadingID),
+			update:     newTaskUpdate().Area(testAreaID).build(),
+			wantArea:   []string{testAreaID},
+			wantParent: []string{},
+		},
+		{
+			name:       "area and heading to project",
+			initial:    fmt.Sprintf(`{"tt":"child","ar":[%q],"agr":[%q]}`, testAreaID, testHeadingID),
+			update:     newTaskUpdate().Project(testProjectID).build(),
+			wantArea:   []string{},
+			wantParent: []string{testProjectID},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := memory.NewState()
+			if err := state.Update(thingscloud.Item{
+				UUID: testTaskID, Kind: thingscloud.ItemKindTask7, Action: thingscloud.ItemActionCreated,
+				P: json.RawMessage(tt.initial),
+			}); err != nil {
+				t.Fatalf("seed task: %v", err)
+			}
+			payload, err := json.Marshal(tt.update)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Update(thingscloud.Item{
+				UUID: testTaskID, Kind: thingscloud.ItemKindTask7, Action: thingscloud.ItemActionModified,
+				P: payload,
+			}); err != nil {
+				t.Fatalf("replay move: %v", err)
+			}
+
+			task := state.Tasks[testTaskID]
+			if fmt.Sprint(task.AreaIDs) != fmt.Sprint(tt.wantArea) {
+				t.Errorf("AreaIDs = %v, want %v", task.AreaIDs, tt.wantArea)
+			}
+			if fmt.Sprint(task.ParentTaskIDs) != fmt.Sprint(tt.wantParent) {
+				t.Errorf("ParentTaskIDs = %v, want %v", task.ParentTaskIDs, tt.wantParent)
+			}
+			if len(task.ActionGroupIDs) != 0 {
+				t.Errorf("ActionGroupIDs = %v, want cleared", task.ActionGroupIDs)
+			}
+		})
 	}
 }
 
@@ -279,7 +338,7 @@ func TestScheduledOptionValidation(t *testing.T) {
 
 func TestDirectCommandsRejectInvalidScheduledBeforeWrite(t *testing.T) {
 	if command := os.Getenv("THINGS_CLI_INVALID_SCHEDULE_COMMAND"); command != "" {
-		h, commits := newWireRecorder(t)
+		h, commits, _ := newWireRecorder(t)
 		switch command {
 		case "create":
 			cmdCreate(h, []string{"invalid", "--scheduled", "tomorrow", "--project", testProjectID})
@@ -367,6 +426,18 @@ func TestBatchMoveToProjectUsesNullScheduleDates(t *testing.T) {
 
 	payload := requirePayloadMap(t, env)
 	assertAnytimeSchedule(t, payload)
+	if got := payload["pr"].([]string); len(got) != 1 || got[0] != testProjectID {
+		t.Fatalf("pr = %v, want [%s]", got, testProjectID)
+	}
+	if got := payload["ar"].([]string); len(got) != 0 {
+		t.Fatalf("ar = %v, want []", got)
+	}
+	if got := payload["agr"].([]string); len(got) != 0 {
+		t.Fatalf("agr = %v, want []", got)
+	}
+	if len(payload) != 7 {
+		t.Fatalf("payload fields = %v, want only md, st, sr, tir, pr, ar, agr", payload)
+	}
 
 	bs, err := json.Marshal(env)
 	if err != nil {
@@ -395,7 +466,20 @@ func TestBatchMoveToAreaUsesNullScheduleDates(t *testing.T) {
 		t.Fatalf("buildBatchMoveToArea failed: %v", err)
 	}
 
-	assertAnytimeSchedule(t, requirePayloadMap(t, env))
+	payload := requirePayloadMap(t, env)
+	assertAnytimeSchedule(t, payload)
+	if got := payload["ar"].([]string); len(got) != 1 || got[0] != testAreaID {
+		t.Fatalf("ar = %v, want [%s]", got, testAreaID)
+	}
+	if got := payload["pr"].([]string); len(got) != 0 {
+		t.Fatalf("pr = %v, want []", got)
+	}
+	if got := payload["agr"].([]string); len(got) != 0 {
+		t.Fatalf("agr = %v, want []", got)
+	}
+	if len(payload) != 7 {
+		t.Fatalf("payload fields = %v, want only md, st, sr, tir, ar, pr, agr", payload)
+	}
 }
 
 func TestBatchEditAutoAnytimeUsesNullScheduleDates(t *testing.T) {
@@ -748,6 +832,26 @@ func TestBuildBatchEditRejectsInvalidRef(t *testing.T) {
 	_, _, err = buildBatchEdit(BatchOp{UUID: "bad uuid", Title: "y"})
 	if err == nil {
 		t.Error("buildBatchEdit with invalid target UUID: got nil error, want validation error")
+	}
+}
+
+func TestBuildBatchEditAllowsProjectWithHeading(t *testing.T) {
+	env, _, err := buildBatchEdit(BatchOp{
+		UUID: testTaskID, Project: testProjectID, Heading: testHeadingID,
+	})
+	if err != nil {
+		t.Fatalf("project with heading: %v", err)
+	}
+
+	payload := requirePayloadMap(t, env)
+	if got := payload["pr"].([]string); len(got) != 1 || got[0] != testProjectID {
+		t.Fatalf("pr = %v, want [%s]", got, testProjectID)
+	}
+	if got := payload["agr"].([]string); len(got) != 1 || got[0] != testHeadingID {
+		t.Fatalf("agr = %v, want [%s]", got, testHeadingID)
+	}
+	if got := payload["ar"].([]string); len(got) != 0 {
+		t.Fatalf("ar = %v, want []", got)
 	}
 }
 

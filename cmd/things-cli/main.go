@@ -43,6 +43,8 @@ type writeEnvelope struct {
 	payload any
 }
 
+const task7WriteKind = "Task7"
+
 func (w writeEnvelope) UUID() string { return w.id }
 
 func (w writeEnvelope) MarshalJSON() ([]byte, error) {
@@ -182,6 +184,13 @@ func validateTaskOpts(opts map[string]string) error {
 		if v, ok := opts[key]; ok && parseDate(v) == nil {
 			return fmt.Errorf("--%s: %q is invalid; expected a calendar date in YYYY-MM-DD format", key, v)
 		}
+	}
+	return nil
+}
+
+func validateEditContainers(area, project, heading string) error {
+	if area != "" && (project != "" || heading != "") {
+		return fmt.Errorf("--area cannot be combined with --project or --heading when editing a task")
 	}
 	return nil
 }
@@ -524,11 +533,15 @@ func (u *taskUpdate) Scheduled(sr, tir int64) *taskUpdate {
 
 func (u *taskUpdate) Area(uuid string) *taskUpdate {
 	u.fields["ar"] = []string{uuid}
+	u.fields["pr"] = []string{}
+	u.fields["agr"] = []string{}
 	return u
 }
 
 func (u *taskUpdate) Project(uuid string) *taskUpdate {
 	u.fields["pr"] = []string{uuid}
+	u.fields["ar"] = []string{}
+	u.fields["agr"] = []string{}
 	return u
 }
 
@@ -985,7 +998,7 @@ func cmdCreate(history *thingscloud.History, args []string) {
 	}
 
 	payload := newTaskCreatePayload(title, opts)
-	env := writeEnvelope{id: taskUUID, action: 0, kind: "Task6", payload: payload}
+	env := writeEnvelope{id: taskUUID, action: 0, kind: task7WriteKind, payload: payload}
 	if err := history.Write(env); err != nil {
 		fatal("create task", err)
 	}
@@ -1019,6 +1032,9 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 		fatal("edit", err)
 	}
 	if err := validateTaskOpts(opts); err != nil {
+		fatal("edit", err)
+	}
+	if err := validateEditContainers(opts["area"], opts["project"], opts["heading"]); err != nil {
 		fatal("edit", err)
 	}
 
@@ -1085,7 +1101,7 @@ func cmdEdit(history *thingscloud.History, taskUUID string, args []string) {
 		u.Tags(strings.Split(v, ","))
 	}
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("edit task", err)
 	}
@@ -1097,7 +1113,7 @@ func cmdComplete(history *thingscloud.History, taskUUID string) {
 	ts := nowTs()
 	u := newTaskUpdate().Status(3).StopDate(ts)
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("complete task", err)
 	}
@@ -1108,7 +1124,7 @@ func cmdComplete(history *thingscloud.History, taskUUID string) {
 func cmdTrash(history *thingscloud.History, taskUUID string) {
 	u := newTaskUpdate().Trash(true)
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("trash task", err)
 	}
@@ -1137,7 +1153,7 @@ func cmdPurge(history *thingscloud.History, taskUUID string) {
 func cmdMoveToToday(history *thingscloud.History, taskUUID string) {
 	u := newTaskUpdate().Today()
 
-	env := writeEnvelope{id: taskUUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: taskUUID, action: 1, kind: task7WriteKind, payload: u.build()}
 	if err := history.Write(env); err != nil {
 		fatal("move to today", err)
 	}
@@ -1360,7 +1376,7 @@ func buildBatchCreate(op BatchOp) (thingscloud.Identifiable, map[string]string, 
 	}
 
 	payload := newTaskCreatePayload(op.Title, opts)
-	env := writeEnvelope{id: taskUUID, action: 0, kind: "Task6", payload: payload}
+	env := writeEnvelope{id: taskUUID, action: 0, kind: task7WriteKind, payload: payload}
 
 	return env, map[string]string{"cmd": "create", "uuid": taskUUID, "title": op.Title}, nil
 }
@@ -1372,7 +1388,7 @@ func buildBatchComplete(op BatchOp) (thingscloud.Identifiable, map[string]string
 
 	ts := nowTs()
 	u := newTaskUpdate().Status(3).StopDate(ts)
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "complete", "uuid": op.UUID}, nil
 }
@@ -1383,7 +1399,7 @@ func buildBatchTrash(op BatchOp) (thingscloud.Identifiable, map[string]string, e
 	}
 
 	u := newTaskUpdate().Trash(true)
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "trash", "uuid": op.UUID}, nil
 }
@@ -1412,7 +1428,7 @@ func buildBatchMoveToToday(op BatchOp) (thingscloud.Identifiable, map[string]str
 	}
 
 	u := newTaskUpdate().Today()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-today", "uuid": op.UUID}, nil
 }
@@ -1429,7 +1445,7 @@ func buildBatchMoveToProject(op BatchOp) (thingscloud.Identifiable, map[string]s
 	}
 
 	u := newTaskUpdate().Project(op.Project).Anytime()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-project", "uuid": op.UUID, "project": op.Project}, nil
 }
@@ -1446,7 +1462,7 @@ func buildBatchMoveToArea(op BatchOp) (thingscloud.Identifiable, map[string]stri
 	}
 
 	u := newTaskUpdate().Area(op.Area).Anytime()
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "move-to-area", "uuid": op.UUID, "area": op.Area}, nil
 }
@@ -1466,6 +1482,9 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 		opts["deadline"] = op.Deadline
 	}
 	if err := validateTaskOpts(opts); err != nil {
+		return nil, nil, err
+	}
+	if err := validateEditContainers(op.Area, op.Project, op.Heading); err != nil {
 		return nil, nil, err
 	}
 
@@ -1516,7 +1535,7 @@ func buildBatchEdit(op BatchOp) (thingscloud.Identifiable, map[string]string, er
 		u.Tags(op.Tags)
 	}
 
-	env := writeEnvelope{id: op.UUID, action: 1, kind: "Task6", payload: u.build()}
+	env := writeEnvelope{id: op.UUID, action: 1, kind: task7WriteKind, payload: u.build()}
 
 	return env, map[string]string{"cmd": "edit", "uuid": op.UUID}, nil
 }

@@ -9,9 +9,10 @@ read-only SQLite queries confirmed the resulting state. SDK reads confirmed
 the tested values, with the Unicode replay correction described below.
 
 This establishes a tested subset, not a complete Task7 write specification.
-The production `History.Write` Task7 guard remains unchanged; normal SDK/CLI
-writes remain Task6. No account credentials or private history captures are
-included in this repository.
+The initial tests used a private writer while production writes remained
+Task6. The subsequent [Task7 write policy](task7-write-policy.md) uses this
+evidence to scope supported writes and reject recurrence updates. No account
+credentials or private history captures are included in this repository.
 
 ## Method
 
@@ -95,11 +96,49 @@ project view showed the second child under the heading.
 
 This verifies those particular batch and relationship shapes. It does not
 test concurrent reordering, every checklist operation, or repeat-instance
-relationships. The default SDK/CLI write envelope remains Task6.
+relationships.
+
+## Follow-up: mixed-version edits and native recurrence
+
+A normal Task6 CLI title edit was applied to both an existing ordinary Task7
+task and a native Task7 recurrence template. Both events used the same UUIDs
+and contained only `tt`/`md`. App and SDK readback passed; checked non-title
+fields were unchanged, including the exact stored recurrence-rule bytes.
+
+The native weekly-after-completion example used `rr` version 4, not a non-null
+`rp`. It created a template plus an `rt`-linked instance. Native completion
+updated the instance (`ss`/`sp`/`md`) and its template (`acrd`/`tir`), after which
+the app showed September 13 as the next occurrence. This is evidence for that
+particular native lifecycle, not complete SDK recurrence-write support.
+
+## Migrated CLI acceptance
+
+The migrated CLI was exercised through its normal `History.Write` path, rather
+than the private direct writer. Creation with a full Unicode note and future
+start/deadline dates, sparse title/note/date editing, completion, and recoverable
+trash all emitted Task7 and matched both the app database and SDK readback.
+
+An edit of the known recurring template was rejected. A batch combining an
+ordinary edit and recurring-instance completion was also rejected in full.
+The cloud head remained unchanged in both cases.
+
+The real CLI move-to-area probe exposed a pre-existing omission: it set `ar`
+without clearing `pr`/`agr`, leaving the task attached to its old project and
+heading. The corrected command explicitly clears those arrays. Its live retest
+left only the area relationship and removed the task from the old project view.
+The inverse move-to-project cleared `ar`/`agr` and left only the project; app
+database and SDK readback agreed. Ambiguous area-plus-project/heading edits are
+rejected before preflight or POST. Creation and standalone heading behavior
+were not changed by this move correction.
+
+A same-UUID, same-field stale-ancestor test returned HTTP 409 for the second
+write and produced no second history event. This is a bounded conflict result,
+not a complete concurrency or offline-convergence test.
 
 ## Remaining verification gaps
 
-- Non-null `rp`/`rr`, modern recurrence and repeat-instance operations.
+- Non-null modern `rp`, broader `rr` configurations, and SDK-driven recurrence
+  creation and repeat-instance lifecycle operations.
 - Reminders, ordering under concurrency, and broader bulk/checklist operations
   beyond the specific creation and move cases above.
 - Permanent deletion and wire action `t=2` were not exercised in this write test.
