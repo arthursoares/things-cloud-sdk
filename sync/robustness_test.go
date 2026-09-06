@@ -59,6 +59,65 @@ func TestSync_CursorSurvivesMidSyncFailure(t *testing.T) {
 	}
 }
 
+func TestSync_InvalidNoteDeltaRollsBackBatchAndCursor(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/items") {
+			fmt.Fprint(w, `{"items":[{"existing":{"e":"Task7","t":1,"p":{"tt":"after"}}},{"created":{"e":"Task7","t":0,"p":{"tt":"must roll back"}}},{"unicode":{"e":"Task7","t":1,"p":{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}}}],"current-item-index":4,"schema":301}`)
+			return
+		}
+		fmt.Fprint(w, `{"latest-server-index":4,"latest-schema-version":301}`)
+	}))
+	defer server.Close()
+
+	client := things.New(server.URL, "test@example.com", "password")
+	syncer, err := Open(filepath.Join(t.TempDir(), "test.db"), client)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer syncer.Close()
+
+	seed := []things.Item{
+		{UUID: "existing", Kind: things.ItemKindTask7, Action: things.ItemActionCreated, P: json.RawMessage(`{"tt":"before"}`)},
+		{UUID: "unicode", Kind: things.ItemKindTask7, Action: things.ItemActionCreated, P: json.RawMessage(`{"nt":"α"}`)},
+	}
+	if _, err := syncer.processItems(seed, 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := syncer.saveSyncState("history", 1); err != nil {
+		t.Fatalf("saveSyncState: %v", err)
+	}
+	var auditBefore int
+	if err := syncer.db.QueryRow(`SELECT COUNT(*) FROM change_log`).Scan(&auditBefore); err != nil {
+		t.Fatalf("count audit before: %v", err)
+	}
+
+	if _, err := syncer.Sync(); err == nil {
+		t.Fatal("Sync accepted invalid note delta")
+	}
+	if got := syncer.LastSyncedIndex(); got != 1 {
+		t.Fatalf("cursor = %d, want 1", got)
+	}
+	var auditAfter int
+	if err := syncer.db.QueryRow(`SELECT COUNT(*) FROM change_log`).Scan(&auditAfter); err != nil {
+		t.Fatalf("count audit after: %v", err)
+	}
+	if auditAfter != auditBefore {
+		t.Fatalf("audit rows = %d, want unchanged %d", auditAfter, auditBefore)
+	}
+	if got, err := syncer.getTask("existing"); err != nil || got == nil || got.Title != "before" {
+		t.Fatalf("existing task changed: %+v, err=%v", got, err)
+	}
+	if got, err := syncer.getTask("created"); err != nil || got != nil {
+		t.Fatalf("created task survived rollback: %+v, err=%v", got, err)
+	}
+	if got, err := syncer.getTask("unicode"); err != nil || got == nil || got.Note != "α" {
+		t.Fatalf("unicode task changed: %+v, err=%v", got, err)
+	}
+}
+
 // TestGetTask_ExcludesSoftDeleted: getTask must filter deleted rows like
 // every other entity, otherwise delete replays emit duplicate TaskDeleted
 // events and State.Task returns tasks the user deleted.

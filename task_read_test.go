@@ -50,6 +50,52 @@ func TestTaskReadPayloadAcceptsKnownNoteFormats(t *testing.T) {
 	}
 }
 
+func TestTaskReadPayloadResolveNote(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name    string
+		current string
+		raw     string
+		want    string
+	}{
+		{name: "omitted", current: "unchanged", raw: `{}`, want: "unchanged"},
+		{name: "null", current: "old", raw: `{"nt":null}`, want: ""},
+		{name: "plain", current: "old", raw: `{"nt":"a plain note"}`, want: "a plain note"},
+		{name: "full", current: "old", raw: `{"nt":{"t":1,"v":"full replacement"}}`, want: "full replacement"},
+		{name: "delta", current: "there", raw: `{"nt":{"t":2,"ps":[{"p":0,"l":0,"r":"Hi "}]}}`, want: "Hi there"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			payload, err := DecodeTaskReadPayload([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("DecodeTaskReadPayload: %v", err)
+			}
+			got, err := payload.ResolveNote(tt.current)
+			if err != nil {
+				t.Fatalf("ResolveNote: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("ResolveNote = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTaskReadPayloadRejectsUnknownAndMalformedNotes(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		`{"nt":42}`,
+		`{"nt":{"t":3,"v":"unsupported"}}`,
+		`{"nt":{"t":2,"ps":"malformed"}}`,
+	} {
+		if _, err := DecodeTaskReadPayload([]byte(raw)); err == nil {
+			t.Errorf("DecodeTaskReadPayload accepted %s", raw)
+		}
+	}
+}
+
 func TestTaskReadKindsAndSanitizedError(t *testing.T) {
 	if err := ValidateTaskReadKinds([]Item{{Kind: "Task6"}, {Kind: "Task7"}, {Kind: "Task4"}, {Kind: "Settings5"}}); err != nil {
 		t.Fatal(err)

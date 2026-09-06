@@ -135,6 +135,11 @@ func (s *Syncer) processTaskItem(item things.Item, serverIndex int, ts time.Time
 
 	// Apply payload to build new state
 	newTask := applyTaskPayload(old, item.UUID, payload.TaskActionItemPayload)
+	resolvedNote, err := payload.ResolveNote(newTask.Note)
+	if err != nil {
+		return nil, err
+	}
+	newTask.Note = resolvedNote
 	payload.ApplyNulls(newTask)
 
 	// Save the new state
@@ -467,43 +472,5 @@ func applyTaskPayload(old *things.Task, uuid string, p things.TaskActionItemPayl
 		t.DelegateIDs = *p.DelegateIDs
 	}
 
-	// Handle Note specially: can be string or Note struct with patches
-	if len(p.Note) > 0 {
-		t.Note = parseNotePayload(t.Note, p.Note)
-	}
-
 	return t
-}
-
-// parseNotePayload parses the note field from a task payload.
-// The note can be either a plain string or a structured Note object with patches.
-func parseNotePayload(currentNote string, raw json.RawMessage) string {
-	// First, try to unmarshal as a string (most common case)
-	var noteStr string
-	if err := json.Unmarshal(raw, &noteStr); err == nil {
-		return noteStr
-	}
-
-	// Try to unmarshal as a structured Note
-	var note things.Note
-	if err := json.Unmarshal(raw, &note); err != nil {
-		// If both fail, return the current note unchanged
-		return currentNote
-	}
-
-	// Handle based on note type
-	switch note.Type {
-	case things.NoteTypeFullText:
-		// Full text replacement
-		return note.Value
-	case things.NoteTypeDelta:
-		// Apply patches to current note
-		return things.ApplyPatches(currentNote, note.Patches)
-	default:
-		// Unknown type, return value if present
-		if note.Value != "" {
-			return note.Value
-		}
-		return currentNote
-	}
 }

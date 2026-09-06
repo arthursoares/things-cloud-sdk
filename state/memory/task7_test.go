@@ -234,6 +234,121 @@ func TestStateUpdateRejectsMalformedTaskPayloadBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestStateUpdateRejectsInvalidNoteDeltaBeforeBatchMutation(t *testing.T) {
+	t.Parallel()
+
+	state := NewState()
+	if err := state.Update(
+		taskReadItem("first", task7Kind, things.ItemActionCreated, `{"tt":"before","nt":"safe"}`),
+		taskReadItem("unicode", task7Kind, things.ItemActionCreated, `{"nt":"α"}`),
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := state.Update(
+		taskReadItem("first", task7Kind, things.ItemActionModified, `{"tt":"after","nt":"changed"}`),
+		taskReadItem("created", task7Kind, things.ItemActionCreated, `{"tt":"must roll back"}`),
+		taskReadItem("unicode", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}`),
+	)
+	if err == nil {
+		t.Fatal("Update accepted a note delta that produced invalid UTF-8")
+	}
+	if got := requireTask(t, state, "first"); got.Title != "before" || got.Note != "safe" {
+		t.Fatalf("earlier task mutated: %+v", got)
+	}
+	if _, ok := state.Tasks["created"]; ok {
+		t.Fatal("earlier task create survived rejected batch")
+	}
+	if got := requireTask(t, state, "unicode").Note; got != "α" {
+		t.Fatalf("invalid delta changed note to %q", got)
+	}
+}
+
+func TestStateUpdateNotePreflightTracksEarlierBatchEvents(t *testing.T) {
+	t.Parallel()
+
+	t.Run("create then malformed delta", func(t *testing.T) {
+		state := NewState()
+		err := state.Update(
+			taskReadItem("note", task7Kind, things.ItemActionCreated, `{"nt":"α"}`),
+			taskReadItem("note", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}`),
+		)
+		if err == nil {
+			t.Fatal("Update accepted malformed delta against an earlier create")
+		}
+		if _, ok := state.Tasks["note"]; ok {
+			t.Fatal("create survived rejected batch")
+		}
+	})
+
+	t.Run("valid edit then malformed delta", func(t *testing.T) {
+		state := NewState()
+		if err := state.Update(taskReadItem("note", task7Kind, things.ItemActionCreated, `{"nt":"α"}`)); err != nil {
+			t.Fatal(err)
+		}
+		err := state.Update(
+			taskReadItem("note", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":0,"l":0,"r":"A"}]}}`),
+			taskReadItem("note", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":2,"l":1,"r":""}]}}`),
+		)
+		if err == nil {
+			t.Fatal("Update accepted malformed delta against an earlier edit")
+		}
+		if got := requireTask(t, state, "note").Note; got != "α" {
+			t.Fatalf("batch changed note to %q", got)
+		}
+	})
+
+	t.Run("delete then delta starts from empty note", func(t *testing.T) {
+		state := NewState()
+		if err := state.Update(taskReadItem("note", task7Kind, things.ItemActionCreated, `{"nt":"α"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Update(
+			taskReadItem("note", task7Kind, things.ItemActionDeleted, `{}`),
+			taskReadItem("note", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}`),
+		); err != nil {
+			t.Fatalf("delta after delete should use an empty note: %v", err)
+		}
+		if got := requireTask(t, state, "note").Note; got != "" {
+			t.Fatalf("note after delete and clamped delta = %q", got)
+		}
+	})
+
+	t.Run("tombstone then delta starts from empty note", func(t *testing.T) {
+		state := NewState()
+		if err := state.Update(taskReadItem("note", task7Kind, things.ItemActionCreated, `{"nt":"α"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Update(
+			things.Item{UUID: "tombstone", Kind: things.ItemKindTombstone, P: json.RawMessage(`{"dloid":"note"}`)},
+			taskReadItem("note", task7Kind, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}`),
+		); err != nil {
+			t.Fatalf("delta after tombstone should use an empty note: %v", err)
+		}
+		if got := requireTask(t, state, "note").Note; got != "" {
+			t.Fatalf("note after tombstone and clamped delta = %q", got)
+		}
+	})
+
+	t.Run("legacy tombstone and task share normalized identity", func(t *testing.T) {
+		const legacyID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+		currentID := things.EncodeLegacyIdentifier(legacyID)
+		state := NewState()
+		if err := state.Update(taskReadItem(legacyID, things.ItemKindTaskPlain, things.ItemActionCreated, `{"nt":"α"}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.Update(
+			things.Item{UUID: "legacy-tombstone", Kind: things.ItemKindTombstonePlain, P: json.RawMessage(`{"dloid":"` + legacyID + `"}`)},
+			taskReadItem(legacyID, things.ItemKindTaskPlain, things.ItemActionModified, `{"nt":{"t":2,"ps":[{"p":1,"l":1,"r":""}]}}`),
+		); err != nil {
+			t.Fatalf("delta after legacy tombstone should use an empty note: %v", err)
+		}
+		if got := requireTask(t, state, currentID).Note; got != "" {
+			t.Fatalf("note after legacy tombstone and clamped delta = %q", got)
+		}
+	})
+}
+
 func TestStateUpdateTask7DatePrecision(t *testing.T) {
 	t.Parallel()
 
