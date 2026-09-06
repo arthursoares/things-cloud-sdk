@@ -22,7 +22,7 @@ func (p taskWriteProbe) MarshalJSON() ([]byte, error) {
 }
 
 func TestHistoryWriteRejectsUnverifiedTaskKinds(t *testing.T) {
-	for _, kind := range []ItemKind{"Task7", "Task8", "Task8\nprivate fixture title"} {
+	for _, kind := range []ItemKind{"Task8", "Task8\nprivate fixture title"} {
 		t.Run(string(kind), func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

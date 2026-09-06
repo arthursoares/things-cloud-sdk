@@ -310,9 +310,13 @@ func main() {
 }
 ```
 
-### Task7 reads and recovery
+### Task7 writes, reads, and recovery
 
-The readers accept Task7 alongside Task6 and older task kinds. Task7 write semantics are still unverified: `History.Write` rejects Task7 and unsupported future task kinds, and the CLI continues to send Task6. New read support does not change the outgoing payload format.
+The CLI uses Task7 for validated ordinary task, project, and heading creation and modification. `History.Write` also accepts explicit `ItemKindTask7` envelopes within that scope. It checks existing update targets against raw history and rejects recurring or unknown targets before posting. This adds a history read for update requests. Direct recurrence configuration, note-delta writes, and Task7 deletion events remain unsupported; other entity formats, including Tombstone2 purge, are unchanged.
+
+Older or sparse task histories that never explicitly establish `rr`, `rp`, and `rt` are also rejected by CLI updates, even when the task may be ordinary. This is a compatibility limit of the first Task7 rollout: the checker does not guess missing recurrence state and does not silently retry through Task6.
+
+Existing SDK callers retain `ItemKindTask == "Task6"` and their previous write behavior. The readers accept both versions and older task kinds. Migrating outgoing writes does not rewrite stored tasks or history. See [Task7 write policy](docs/task7-write-policy.md) for the exact boundary, SDK usage, and mixed-version live evidence.
 
 The first read after this upgrade replays state built by an older task reader:
 
@@ -393,7 +397,7 @@ Key findings from reverse engineering the Things Cloud sync protocol:
 - **Status field (`ss`)**: `0` = Pending, `2` = Canceled, `3` = Completed. Don't confuse with `st` (schedule)!
 - **Headings (`tp=2`) must have `st=1`** (anytime). `st=0` (inbox) crashes Things.app.
 - **Tasks in projects, headings, or areas** should default to `st=1` (anytime) — they've been triaged out of inbox.
-- **Kind strings**: `Task6`, `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2`
+- **Kind strings**: `Task7` for verified CLI task writes; `Task6` remains supported for existing SDK callers; `Tag4`, `ChecklistItem3`, `Area3`, `Tombstone2` for other entities.
 
 Since v0.3.0 the SDK enforces the identifier rules instead of trusting callers: `things.NewUUID()` generates canonical Base58 identifiers (one leading `1` per leading zero byte — a subtlety whose absence used to corrupt ~1 in 256 creates), `things.ValidateUUID()` checks any identifier, and `History.Write()` refuses items with invalid or duplicate UUIDs before anything reaches the server.
 

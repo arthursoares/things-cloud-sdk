@@ -49,6 +49,10 @@ func TestTaskUpdateBuilderFields(t *testing.T) {
 			map[string]any{"dd": int64(1770000000)}},
 		{"Scheduled", func() map[string]any { return newTaskUpdate().Scheduled(100, 200).build() },
 			map[string]any{"sr": int64(100), "tir": int64(200)}},
+		{"Area", func() map[string]any { return newTaskUpdate().Area("area").build() },
+			map[string]any{"ar": []string{"area"}, "pr": []string{}, "agr": []string{}}},
+		{"Project", func() map[string]any { return newTaskUpdate().Project("project").build() },
+			map[string]any{"pr": []string{"project"}, "ar": []string{}, "agr": []string{}}},
 		{"Tags", func() map[string]any { return newTaskUpdate().Tags([]string{"a1", "b2"}).build() },
 			map[string]any{"tg": []string{"a1", "b2"}}},
 	}
@@ -233,14 +237,16 @@ type capturedCommit struct {
 	}
 }
 
-// newWireRecorder returns a History wired to a fake server plus a slice
-// collecting every commit POSTed through it.
-func newWireRecorder(t *testing.T) (*thingscloud.History, *[]capturedCommit) {
+// newWireRecorder returns a History wired to a fake server plus slices
+// collecting history preflight GETs and every commit POSTed through it.
+func newWireRecorder(t *testing.T, ordinaryTaskIDs ...string) (*thingscloud.History, *[]capturedCommit, *[]string) {
 	t.Helper()
 	var commits []capturedCommit
+	var historyRequests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == "POST" && strings.Contains(r.URL.Path, "/commit") {
+		switch {
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/commit"):
 			var cc capturedCommit
 			cc.ancestorIndex = r.URL.Query().Get("ancestor-index")
 			if err := json.NewDecoder(r.Body).Decode(&cc.body); err != nil {
@@ -248,15 +254,59 @@ func newWireRecorder(t *testing.T) (*thingscloud.History, *[]capturedCommit) {
 			}
 			commits = append(commits, cc)
 			fmt.Fprint(w, `{"server-head-index":42}`)
-			return
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/items"):
+			historyRequests = append(historyRequests, r.URL.RequestURI())
+			if got := r.URL.Query().Get("start-index"); got != "0" {
+				t.Errorf("preflight start-index = %q, want 0", got)
+			}
+			created := make(map[string]any, len(ordinaryTaskIDs))
+			for _, id := range ordinaryTaskIDs {
+				created[id] = map[string]any{
+					"e": "Task7",
+					"t": 0,
+					"p": map[string]any{
+						"tt": "seeded ordinary task",
+						"tp": 0,
+						"st": 1,
+						"ss": 0,
+						"rr": nil,
+						"rp": nil,
+						"rt": []string{},
+					},
+				}
+			}
+			items := make([]map[string]any, 7)
+			items[0] = created
+			for i := 1; i < len(items); i++ {
+				items[i] = map[string]any{}
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items":              items,
+				"current-item-index": 7,
+				"schema":             301,
+			}); err != nil {
+				t.Errorf("encode history fixture: %v", err)
+			}
+		default:
+			fmt.Fprint(w, `{}`)
 		}
-		fmt.Fprint(w, `{}`)
 	}))
 	t.Cleanup(server.Close)
 
 	c := thingscloud.New(server.URL, "test@example.com", "pw")
 	h := &thingscloud.History{Client: c, ID: "wire-test-history", LatestServerIndex: 7}
-	return h, &commits
+	return h, &commits, &historyRequests
+}
+
+func assertTaskPreflight(t *testing.T, historyRequests []string, commit capturedCommit) {
+	t.Helper()
+	want := "/version/1/history/wire-test-history/items?start-index=0"
+	if len(historyRequests) != 1 || historyRequests[0] != want {
+		t.Fatalf("history preflight requests = %q, want [%q]", historyRequests, want)
+	}
+	if commit.ancestorIndex != "7" {
+		t.Errorf("ancestor-index = %q, want preflight head 7", commit.ancestorIndex)
+	}
 }
 
 func singleItem(t *testing.T, cc capturedCommit) (uuid string, action int, kind string, payload map[string]any) {
@@ -275,7 +325,7 @@ func singleItem(t *testing.T, cc capturedCommit) (uuid string, action int, kind 
 }
 
 func TestCmdCreateWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	h, commits, historyRequests := newWireRecorder(t)
 	id := thingscloud.NewUUID()
 
 	cmdCreate(h, []string{"Wire task", "--uuid", id, "--when", "today", "--note", "body"})
@@ -283,13 +333,16 @@ func TestCmdCreateWire(t *testing.T) {
 	if len(*commits) != 1 {
 		t.Fatalf("%d commits, want 1", len(*commits))
 	}
+	if len(*historyRequests) != 0 {
+		t.Fatalf("Task7 create made history preflight requests: %q", *historyRequests)
+	}
 	cc := (*commits)[0]
 	if cc.ancestorIndex != "7" {
 		t.Errorf("ancestor-index = %q, want 7 (the synced head)", cc.ancestorIndex)
 	}
 	gotID, action, kind, p := singleItem(t, cc)
-	if gotID != id || action != 0 || kind != "Task6" {
-		t.Errorf("envelope = (%s, %d, %s), want (%s, 0, Task6)", gotID, action, kind, id)
+	if gotID != id || action != 0 || kind != "Task7" {
+		t.Errorf("envelope = (%s, %d, %s), want (%s, 0, Task7)", gotID, action, kind, id)
 	}
 	if p["md"] != nil {
 		t.Errorf("create sent md = %v, must be null on creates", p["md"])
@@ -304,14 +357,15 @@ func TestCmdCreateWire(t *testing.T) {
 }
 
 func TestCmdCompleteWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 
 	cmdComplete(h, id)
 
 	_, action, kind, p := singleItem(t, (*commits)[0])
-	if action != 1 || kind != "Task6" {
-		t.Errorf("envelope action/kind = %d/%s, want 1/Task6", action, kind)
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
+	if action != 1 || kind != "Task7" {
+		t.Errorf("envelope action/kind = %d/%s, want 1/Task7", action, kind)
 	}
 	if p["ss"] != float64(3) {
 		t.Errorf("ss = %v, want 3 (completed)", p["ss"])
@@ -325,19 +379,20 @@ func TestCmdCompleteWire(t *testing.T) {
 }
 
 func TestCmdTrashWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 
 	cmdTrash(h, id)
 
 	_, action, kind, p := singleItem(t, (*commits)[0])
-	if action != 1 || kind != "Task6" || p["tr"] != true {
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
+	if action != 1 || kind != "Task7" || p["tr"] != true {
 		t.Errorf("trash wire = action %d kind %s tr %v", action, kind, p["tr"])
 	}
 }
 
 func TestCmdPurgeWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	h, commits, _ := newWireRecorder(t)
 	target := thingscloud.NewUUID()
 
 	cmdPurge(h, target)
@@ -358,11 +413,13 @@ func TestCmdPurgeWire(t *testing.T) {
 }
 
 func TestCmdMoveToTodayWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 
-	cmdMoveToToday(h, thingscloud.NewUUID())
+	cmdMoveToToday(h, id)
 
 	_, _, _, p := singleItem(t, (*commits)[0])
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
 	if p["st"] != float64(1) {
 		t.Errorf("st = %v, want 1", p["st"])
 	}
@@ -372,7 +429,7 @@ func TestCmdMoveToTodayWire(t *testing.T) {
 }
 
 func TestCmdCreateAreaWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	h, commits, _ := newWireRecorder(t)
 	id := thingscloud.NewUUID()
 
 	cmdCreateArea(h, []string{"Wire Area", "--uuid", id})
@@ -388,7 +445,7 @@ func TestCmdCreateAreaWire(t *testing.T) {
 }
 
 func TestCmdCreateTagWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	h, commits, _ := newWireRecorder(t)
 	id := thingscloud.NewUUID()
 
 	cmdCreateTag(h, []string{"Wire Tag", "--uuid", id})
@@ -403,7 +460,7 @@ func TestCmdCreateTagWire(t *testing.T) {
 }
 
 func TestCmdAddChecklistWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
+	h, commits, _ := newWireRecorder(t)
 	task := thingscloud.NewUUID()
 
 	cmdAddChecklist(h, task, []string{"one,two"})
@@ -433,14 +490,15 @@ func TestCmdAddChecklistWire(t *testing.T) {
 }
 
 func TestCmdEditWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 	proj := thingscloud.NewUUID()
 
 	cmdEdit(h, id, []string{"--title", "renamed", "--project", proj})
 
 	gotID, action, kind, p := singleItem(t, (*commits)[0])
-	if gotID != id || action != 1 || kind != "Task6" {
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
+	if gotID != id || action != 1 || kind != "Task7" {
 		t.Errorf("edit envelope = (%s, %d, %s)", gotID, action, kind)
 	}
 	if p["tt"] != "renamed" {
@@ -450,6 +508,12 @@ func TestCmdEditWire(t *testing.T) {
 	if len(pr) != 1 || pr[0] != proj {
 		t.Errorf("pr = %v, want [%s]", p["pr"], proj)
 	}
+	if ar, ok := p["ar"].([]any); !ok || len(ar) != 0 {
+		t.Errorf("ar = %v, want [] when moving to a project", p["ar"])
+	}
+	if agr, ok := p["agr"].([]any); !ok || len(agr) != 0 {
+		t.Errorf("agr = %v, want [] when moving to a project", p["agr"])
+	}
 	// Assigning a project without an explicit schedule must move the task
 	// out of inbox with null dates (Bug 8 + PR #9 semantics).
 	if p["st"] != float64(1) || p["sr"] != nil || p["tir"] != nil {
@@ -458,8 +522,8 @@ func TestCmdEditWire(t *testing.T) {
 }
 
 func TestCmdEditFutureScheduledWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 	proj := thingscloud.NewUUID()
 	future := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	wantDate := float64(parseDate(future).Unix())
@@ -467,8 +531,9 @@ func TestCmdEditFutureScheduledWire(t *testing.T) {
 	cmdEdit(h, id, []string{"--scheduled", future, "--project", proj})
 
 	gotID, action, kind, p := singleItem(t, (*commits)[0])
-	if gotID != id || action != 1 || kind != "Task6" {
-		t.Fatalf("edit envelope = (%s, %d, %s), want (%s, 1, Task6)", gotID, action, kind, id)
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
+	if gotID != id || action != 1 || kind != "Task7" {
+		t.Fatalf("edit envelope = (%s, %d, %s), want (%s, 1, Task7)", gotID, action, kind, id)
 	}
 	if p["st"] != float64(2) || p["sr"] != wantDate || p["tir"] != wantDate {
 		t.Fatalf("future schedule = st:%v sr:%v tir:%v, want 2/%v/%v", p["st"], p["sr"], p["tir"], wantDate, wantDate)
@@ -477,14 +542,14 @@ func TestCmdEditFutureScheduledWire(t *testing.T) {
 	if !ok || len(pr) != 1 || pr[0] != proj {
 		t.Fatalf("pr = %v, want [%s]", p["pr"], proj)
 	}
-	if len(p) != 5 {
-		t.Fatalf("edit payload fields = %v, want only md, st, sr, tir, pr", p)
+	if len(p) != 7 {
+		t.Fatalf("edit payload fields = %v, want only md, st, sr, tir, pr, ar, agr", p)
 	}
 }
 
 func TestCmdEditExplicitWhenOverridesScheduledClassification(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id := thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id)
 	area := thingscloud.NewUUID()
 	future := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	wantDate := float64(parseDate(future).Unix())
@@ -492,12 +557,19 @@ func TestCmdEditExplicitWhenOverridesScheduledClassification(t *testing.T) {
 	cmdEdit(h, id, []string{"--scheduled", future, "--when", "anytime", "--area", area})
 
 	_, _, _, p := singleItem(t, (*commits)[0])
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
 	if p["st"] != float64(1) || p["sr"] != wantDate || p["tir"] != wantDate {
 		t.Fatalf("explicit anytime schedule = st:%v sr:%v tir:%v, want 1/%v/%v", p["st"], p["sr"], p["tir"], wantDate, wantDate)
 	}
 	areas, ok := p["ar"].([]any)
 	if !ok || len(areas) != 1 || areas[0] != area {
 		t.Fatalf("ar = %v, want [%s]", p["ar"], area)
+	}
+	if pr, ok := p["pr"].([]any); !ok || len(pr) != 0 {
+		t.Errorf("pr = %v, want [] when moving to an area", p["pr"])
+	}
+	if agr, ok := p["agr"].([]any); !ok || len(agr) != 0 {
+		t.Errorf("agr = %v, want [] when moving to an area", p["agr"])
 	}
 }
 
@@ -573,8 +645,8 @@ func TestLoadStateBuildsAndCachesState(t *testing.T) {
 }
 
 func TestCmdBatchWire(t *testing.T) {
-	h, commits := newWireRecorder(t)
 	id1, id2 := thingscloud.NewUUID(), thingscloud.NewUUID()
+	h, commits, historyRequests := newWireRecorder(t, id2)
 
 	// cmdBatch reads ops from stdin.
 	ops := fmt.Sprintf(`[
@@ -592,16 +664,17 @@ func TestCmdBatchWire(t *testing.T) {
 	if len(*commits) != 1 {
 		t.Fatalf("%d commits, want 1 — batch must send all ops in a single HTTP request", len(*commits))
 	}
+	assertTaskPreflight(t, *historyRequests, (*commits)[0])
 	body := (*commits)[0].body
 	if len(body) != 2 {
 		t.Fatalf("commit has %d items, want 2", len(body))
 	}
 	create, complete := body[id1], body[id2]
-	if create.E != "Task6" || create.T != 0 {
-		t.Errorf("create envelope = %s/%d, want Task6/0", create.E, create.T)
+	if create.E != "Task7" || create.T != 0 {
+		t.Errorf("create envelope = %s/%d, want Task7/0", create.E, create.T)
 	}
-	if complete.T != 1 {
-		t.Errorf("complete envelope action = %d, want 1", complete.T)
+	if complete.E != "Task7" || complete.T != 1 {
+		t.Errorf("complete envelope = %s/%d, want Task7/1", complete.E, complete.T)
 	}
 	var p map[string]any
 	if err := json.Unmarshal(complete.P, &p); err != nil || p["ss"] != float64(3) {

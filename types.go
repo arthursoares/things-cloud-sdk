@@ -60,8 +60,8 @@ var (
 	ItemKindChecklistItem3 ItemKind = "ChecklistItem3"
 	// ItemKindTask identifies a Task or Subtask
 	ItemKindTask ItemKind = "Task6"
-	// ItemKindTask7 is supported for reading current histories. Writes continue
-	// to use ItemKindTask until the Task7 write contract is verified.
+	// ItemKindTask7 identifies the explicitly validated Task7 read/write scope.
+	// ItemKindTask remains Task6 for compatibility with existing callers.
 	ItemKindTask7     ItemKind = "Task7"
 	ItemKindTask4     ItemKind = "Task4"
 	ItemKindTask3     ItemKind = "Task3"
