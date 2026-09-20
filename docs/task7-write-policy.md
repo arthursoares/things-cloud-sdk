@@ -39,6 +39,14 @@ relying on the public `Task` projection, which does not retain every recurrence
 field. Unknown/missing targets and recurring templates or instances fail
 before any operation in that write request is posted.
 
+Historical tombstones must identify a deletion target unambiguously before
+preflight can classify them. After legacy identifier normalization, tombstones
+for unrelated objects do not need a decodable deletion timestamp (`dld`).
+Tombstones affecting an update target still receive full payload validation.
+Missing, invalid, or ambiguous deletion targets and malformed JSON/Unicode
+continue to block the write; errors include the history index and validation
+reason. There is no history-validation bypass.
+
 This also rejects older or sparse histories without explicit values for all
 three recurrence markers (`rr`, `rp`, `rt`), including tasks created by the
 legacy sparse SDK example. Such a task may be ordinary, but the new checker

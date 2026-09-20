@@ -371,25 +371,40 @@ func (h *History) preflightTask7Modifications(targets map[string]struct{}) (int,
 
 func applyTask7PreflightItem(states map[string]*task7TargetState, item Item) error {
 	if item.Kind == ItemKind("Tombstone2") || item.Kind == ItemKind("Tombstone") {
-		if !utf8.Valid(item.P) || rejectUnpairedJSONSurrogates(item.P) != nil || rejectDuplicateJSONKeys(item.P, true) != nil {
-			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history")
+		if !utf8.Valid(item.P) {
+			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: invalid UTF-8", item.ServerIndex)
 		}
-		var payload TombstoneActionItemPayload
-		if err := json.Unmarshal(item.P, &payload); err != nil {
-			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history")
+		if err := rejectUnpairedJSONSurrogates(item.P); err != nil {
+			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: %w", item.ServerIndex, err)
+		}
+		if err := rejectDuplicateJSONKeys(item.P, true); err != nil {
+			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: %w", item.ServerIndex, err)
 		}
 		fields, err := jsonObject(item.P)
 		if err != nil {
-			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history")
+			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: %w", item.ServerIndex, err)
 		}
-		if _, ok := jsonString(fields["dloid"]); !ok || payload.DeletedObjectID == "" {
-			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history")
+		// Struct decoding also accepts case-insensitive field names. Refuse
+		// aliases so relevance and full payload decoding cannot disagree.
+		for key := range fields {
+			if key != "dloid" && strings.EqualFold(key, "dloid") {
+				return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: ambiguous dloid field", item.ServerIndex)
+			}
 		}
-		target := payload.DeletedObjectID
+		target, ok := jsonString(fields["dloid"])
+		if !ok || target == "" {
+			return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: dloid must be a nonempty string", item.ServerIndex)
+		}
 		if item.Kind == ItemKind("Tombstone") && ValidateUUID(target) != nil {
 			target = EncodeLegacyIdentifier(target)
 		}
 		if state := states[target]; state != nil {
+			// An unrelated tombstone's timestamp cannot affect these targets.
+			// Keep full validation for deletions that do affect a target.
+			var payload TombstoneActionItemPayload
+			if err := json.Unmarshal(item.P, &payload); err != nil {
+				return fmt.Errorf("Task7 write preflight: malformed tombstone in raw history at index %d: %w", item.ServerIndex, err)
+			}
 			state.markAffected(item.ServerIndex)
 			state.resetSemantic(false)
 		}
