@@ -1,6 +1,6 @@
 package sync
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 -- Schema version tracking
@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     heading_uuid TEXT,
     alarm_time_offset INTEGER,
     recurrence_rule TEXT,
+    recurrence_ids TEXT,
     deleted INTEGER DEFAULT 0
 );
 
@@ -123,6 +124,13 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_uuid ON tasks(project_uuid);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_task_uuid ON checklist_items(task_uuid);
 `
 
+// migration3 stores rt (recurrence_ids, a JSON array). recurrence_rule (rr)
+// existed but was never written; TaskReplayVersion 4 rebuilds old caches so
+// both columns are filled from the history.
+const migration3 = `
+ALTER TABLE tasks ADD COLUMN recurrence_ids TEXT;
+`
+
 func (s *Syncer) migrate() error {
 	// Check current version
 	var version int
@@ -144,6 +152,11 @@ func (s *Syncer) migrate() error {
 	// Incremental migrations
 	if version < 2 {
 		if _, err := s.db.Exec(migration2); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err := s.db.Exec(migration3); err != nil {
 			return err
 		}
 	}

@@ -408,6 +408,7 @@ func applyTaskPayload(old *things.Task, uuid string, p things.TaskActionItemPayl
 		t.TagIDs = old.TagIDs
 		t.RecurrenceIDs = old.RecurrenceIDs
 		t.DelegateIDs = old.DelegateIDs
+		t.Repeater = old.Repeater
 	}
 
 	// Apply each non-nil field from payload
@@ -467,6 +468,9 @@ func applyTaskPayload(old *things.Task, uuid string, p things.TaskActionItemPayl
 	}
 	if p.RecurrenceTaskIDs != nil {
 		t.RecurrenceIDs = *p.RecurrenceTaskIDs
+	}
+	if p.Repeater != nil {
+		t.Repeater = p.Repeater
 	}
 	if p.DelegateIDs != nil {
 		t.DelegateIDs = *p.DelegateIDs

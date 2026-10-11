@@ -10,7 +10,7 @@ import (
 
 // TaskReplayVersion identifies the task read semantics used to build derived
 // state. Cached state from older generations must be replayed from scratch.
-const TaskReplayVersion = 3
+const TaskReplayVersion = 4
 
 // UnsupportedTaskKindError means the task state would be incomplete if replay
 // continued. ServerIndex is -1 when the source did not provide an index.
@@ -175,6 +175,8 @@ func (p TaskReadPayload) ApplyNulls(task *Task) {
 			task.TagIDs = nil
 		case "rt":
 			task.RecurrenceIDs = nil
+		case "rr":
+			task.Repeater = nil
 		case "dl":
 			task.DelegateIDs = nil
 		case "nt":

@@ -134,6 +134,27 @@ func TestStateUpdateTask7NullableFields(t *testing.T) {
 	}
 }
 
+func TestStateUpdateTask7RepeatRule(t *testing.T) {
+	t.Parallel()
+
+	state := NewState()
+	if err := state.Update(
+		taskReadItem("template", task7Kind, things.ItemActionCreated, `{"tt":"weekly","rr":{"fu":256,"fa":1,"of":[{"wd":1}],"tp":0}}`),
+	); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	task := requireTask(t, state, "template")
+	if task.Repeater == nil || task.Repeater.FrequencyUnit != things.FrequencyUnitWeekly || !task.IsRepeatingTemplate() {
+		t.Fatalf("repeat rule not kept: %+v", task.Repeater)
+	}
+	if err := state.Update(taskReadItem("template", task7Kind, things.ItemActionModified, `{"rr":null}`)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if task := requireTask(t, state, "template"); task.Repeater != nil {
+		t.Fatalf("rr null not cleared: %+v", task.Repeater)
+	}
+}
+
 func TestStateUpdateTask7ScheduleStatusTrashAndDeletion(t *testing.T) {
 	t.Parallel()
 

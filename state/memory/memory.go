@@ -164,6 +164,9 @@ func (s *State) updateTask(item things.TaskActionItem) *things.Task {
 	if item.P.RecurrenceTaskIDs != nil {
 		t.RecurrenceIDs = *item.P.RecurrenceTaskIDs
 	}
+	if item.P.Repeater != nil {
+		t.Repeater = item.P.Repeater
+	}
 
 	return t
 }

@@ -209,8 +209,25 @@ type Task struct {
 	DueOrder         int
 	AlarmTimeOffset  *int
 	TagIDs           []string
-	RecurrenceIDs    []string
-	DelegateIDs      []string
+	// RecurrenceIDs (rt) names the repeating template a generated instance
+	// belongs to.
+	RecurrenceIDs []string
+	DelegateIDs   []string
+	// Repeater (rr) is the repeat rule. Things keeps it on a hidden template;
+	// the visible to-dos it generates carry the template in RecurrenceIDs.
+	Repeater *RepeaterConfiguration
+}
+
+// IsRepeatingTemplate reports whether t is the hidden template of a repeating
+// to-do or project. Things does not list templates in its views.
+func (t Task) IsRepeatingTemplate() bool {
+	return t.Repeater != nil
+}
+
+// IsRepeatingInstance reports whether t was generated from a repeating
+// template.
+func (t Task) IsRepeatingInstance() bool {
+	return len(t.RecurrenceIDs) > 0
 }
 
 // TaskActionItemPayload describes the payload for modifying Tasks, and also Projects,
