@@ -2,7 +2,9 @@ package sync
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	things "github.com/arthursoares/things-cloud-sdk"
@@ -16,7 +18,8 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 			uuid, type, title, note, status, schedule,
 			scheduled_date, deadline_date, completion_date, creation_date, modification_date,
 			"index", today_index, in_trash, area_uuid, project_uuid, heading_uuid,
-			alarm_time_offset, recurrence_rule, deleted
+			alarm_time_offset, recurrence_rule, recurrence_ids,
+			start_bucket, deadline_suppression_date, today_index_reference_date, deleted
 		FROM tasks
 		WHERE uuid = ? AND deleted = 0
 	`, uuid)
@@ -37,6 +40,9 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 		headingUUID      sql.NullString
 		alarmTimeOffset  sql.NullInt64
 		recurrenceRule   sql.NullString
+		recurrenceIDs    sql.NullString
+		suppressionDate  sql.NullInt64
+		todayReference   sql.NullInt64
 		deleted          int
 	)
 
@@ -44,7 +50,8 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 		&t.UUID, &taskType, &t.Title, &t.Note, &status, &schedule,
 		&scheduledDate, &deadlineDate, &completionDate, &creationDate, &modificationDate,
 		&t.Index, &t.TodayIndex, &inTrash, &areaUUID, &projectUUID, &headingUUID,
-		&alarmTimeOffset, &recurrenceRule, &deleted,
+		&alarmTimeOffset, &recurrenceRule, &recurrenceIDs,
+		&t.StartBucket, &suppressionDate, &todayReference, &deleted,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -79,6 +86,14 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 		ts := time.Unix(modificationDate.Int64, 0).UTC()
 		t.ModificationDate = &ts
 	}
+	if suppressionDate.Valid {
+		ts := time.Unix(suppressionDate.Int64, 0).UTC()
+		t.DeadlineSuppressionDate = &ts
+	}
+	if todayReference.Valid {
+		ts := time.Unix(todayReference.Int64, 0).UTC()
+		t.TodayIndexReferenceDate = &ts
+	}
 
 	// Convert nullable foreign keys to slices
 	if areaUUID.Valid && areaUUID.String != "" {
@@ -95,6 +110,19 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 	if alarmTimeOffset.Valid {
 		offset := int(alarmTimeOffset.Int64)
 		t.AlarmTimeOffset = &offset
+	}
+
+	if recurrenceRule.Valid && recurrenceRule.String != "" {
+		var rr things.RepeaterConfiguration
+		if err := json.Unmarshal([]byte(recurrenceRule.String), &rr); err != nil {
+			return nil, fmt.Errorf("decoding stored repeat rule of %s: %w", uuid, err)
+		}
+		t.Repeater = &rr
+	}
+	if recurrenceIDs.Valid && recurrenceIDs.String != "" {
+		if err := json.Unmarshal([]byte(recurrenceIDs.String), &t.RecurrenceIDs); err != nil {
+			return nil, fmt.Errorf("decoding stored recurrence IDs of %s: %w", uuid, err)
+		}
 	}
 
 	// Load tags from junction table
@@ -122,6 +150,7 @@ func (s *Syncer) getTask(uuid string) (*things.Task, error) {
 func (s *Syncer) saveTask(t *things.Task) error {
 	// Convert nullable timestamps to Unix integers
 	var scheduledDate, deadlineDate, completionDate, creationDate, modificationDate sql.NullInt64
+	var suppressionDate, todayReference sql.NullInt64
 
 	if t.ScheduledDate != nil {
 		scheduledDate = sql.NullInt64{Int64: t.ScheduledDate.Unix(), Valid: true}
@@ -137,6 +166,12 @@ func (s *Syncer) saveTask(t *things.Task) error {
 	}
 	if t.ModificationDate != nil {
 		modificationDate = sql.NullInt64{Int64: t.ModificationDate.Unix(), Valid: true}
+	}
+	if t.DeadlineSuppressionDate != nil {
+		suppressionDate = sql.NullInt64{Int64: t.DeadlineSuppressionDate.Unix(), Valid: true}
+	}
+	if t.TodayIndexReferenceDate != nil {
+		todayReference = sql.NullInt64{Int64: t.TodayIndexReferenceDate.Unix(), Valid: true}
 	}
 
 	// Convert foreign key slices to single values
@@ -158,6 +193,23 @@ func (s *Syncer) saveTask(t *things.Task) error {
 		alarmTimeOffset = sql.NullInt64{Int64: int64(*t.AlarmTimeOffset), Valid: true}
 	}
 
+	// Repeat rule (rr) and template link (rt) are stored as JSON
+	var recurrenceRule, recurrenceIDs sql.NullString
+	if t.Repeater != nil {
+		bs, err := json.Marshal(t.Repeater)
+		if err != nil {
+			return fmt.Errorf("encoding repeat rule of %s: %w", t.UUID, err)
+		}
+		recurrenceRule = sql.NullString{String: string(bs), Valid: true}
+	}
+	if len(t.RecurrenceIDs) > 0 {
+		bs, err := json.Marshal(t.RecurrenceIDs)
+		if err != nil {
+			return fmt.Errorf("encoding recurrence IDs of %s: %w", t.UUID, err)
+		}
+		recurrenceIDs = sql.NullString{String: string(bs), Valid: true}
+	}
+
 	// Convert InTrash to integer
 	var inTrash int
 	if t.InTrash {
@@ -170,13 +222,15 @@ func (s *Syncer) saveTask(t *things.Task) error {
 			uuid, type, title, note, status, schedule,
 			scheduled_date, deadline_date, completion_date, creation_date, modification_date,
 			"index", today_index, in_trash, area_uuid, project_uuid, heading_uuid,
-			alarm_time_offset, recurrence_rule, deleted
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+			alarm_time_offset, recurrence_rule, recurrence_ids,
+			start_bucket, deadline_suppression_date, today_index_reference_date, deleted
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 	`,
 		t.UUID, int(t.Type), t.Title, t.Note, int(t.Status), int(t.Schedule),
 		scheduledDate, deadlineDate, completionDate, creationDate, modificationDate,
 		t.Index, t.TodayIndex, inTrash, areaUUID, projectUUID, headingUUID,
-		alarmTimeOffset, sql.NullString{}, // recurrence_rule not directly on Task struct
+		alarmTimeOffset, recurrenceRule, recurrenceIDs,
+		t.StartBucket, suppressionDate, todayReference,
 	)
 	if err != nil {
 		return err

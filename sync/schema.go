@@ -1,6 +1,6 @@
 package sync
 
-const schemaVersion = 2
+const schemaVersion = 4
 
 const schema = `
 -- Schema version tracking
@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     heading_uuid TEXT,
     alarm_time_offset INTEGER,
     recurrence_rule TEXT,
+    recurrence_ids TEXT,
+    start_bucket INTEGER DEFAULT 0,
+    deadline_suppression_date INTEGER,
+    today_index_reference_date INTEGER,
     deleted INTEGER DEFAULT 0
 );
 
@@ -123,6 +127,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_uuid ON tasks(project_uuid);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_task_uuid ON checklist_items(task_uuid);
 `
 
+// migration3 stores rt (recurrence_ids, a JSON array). recurrence_rule (rr)
+// existed but was never written; TaskReplayVersion 4 rebuilds old caches so
+// both columns are filled from the history.
+const migration3 = `
+ALTER TABLE tasks ADD COLUMN recurrence_ids TEXT;
+`
+
+// migration4 stores sb (start_bucket), dds (deadline_suppression_date) and
+// tir (today_index_reference_date), which decide whether Things lists a to-do
+// in Today and in This Evening. TaskReplayVersion 5 rebuilds old caches so
+// the columns are filled from the history.
+const migration4 = `
+ALTER TABLE tasks ADD COLUMN start_bucket INTEGER DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN deadline_suppression_date INTEGER;
+ALTER TABLE tasks ADD COLUMN today_index_reference_date INTEGER;
+`
+
 func (s *Syncer) migrate() error {
 	// Check current version
 	var version int
@@ -141,14 +162,33 @@ func (s *Syncer) migrate() error {
 		return nil
 	}
 
-	// Incremental migrations
+	// Incremental migrations run in one transaction, so a failure part way
+	// through a multi-statement migration leaves the old schema and version
+	// in place instead of columns that the next attempt would add again.
+	tx, err := s.rawDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // No-op if committed
 	if version < 2 {
-		if _, err := s.db.Exec(migration2); err != nil {
+		if _, err := tx.Exec(migration2); err != nil {
+			return err
+		}
+	}
+	if version < 3 {
+		if _, err := tx.Exec(migration3); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		if _, err := tx.Exec(migration4); err != nil {
 			return err
 		}
 	}
 
 	// Update schema version
-	_, err = s.db.Exec("UPDATE schema_version SET version = ?", schemaVersion)
-	return err
+	if _, err := tx.Exec("UPDATE schema_version SET version = ?", schemaVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

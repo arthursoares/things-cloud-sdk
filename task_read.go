@@ -10,7 +10,7 @@ import (
 
 // TaskReplayVersion identifies the task read semantics used to build derived
 // state. Cached state from older generations must be replayed from scratch.
-const TaskReplayVersion = 3
+const TaskReplayVersion = 5
 
 // UnsupportedTaskKindError means the task state would be incomplete if replay
 // continued. ServerIndex is -1 when the source did not provide an index.
@@ -149,7 +149,8 @@ func (p TaskReadPayload) ResolveNote(current string) (string, error) {
 
 // ApplyNulls clears nullable fields after the ordinary non-nil payload fields
 // have been applied. In particular, tir is a reference date and never changes
-// ScheduledDate; only sr controls that field.
+// ScheduledDate; only sr controls that field. A null sb resets the to-do to
+// the main Today list.
 func (p TaskReadPayload) ApplyNulls(task *Task) {
 	for key := range p.nullFields {
 		switch key {
@@ -175,6 +176,14 @@ func (p TaskReadPayload) ApplyNulls(task *Task) {
 			task.TagIDs = nil
 		case "rt":
 			task.RecurrenceIDs = nil
+		case "rr":
+			task.Repeater = nil
+		case "sb":
+			task.StartBucket = 0
+		case "dds":
+			task.DeadlineSuppressionDate = nil
+		case "tir":
+			task.TodayIndexReferenceDate = nil
 		case "dl":
 			task.DelegateIDs = nil
 		case "nt":

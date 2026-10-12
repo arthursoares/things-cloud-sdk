@@ -164,6 +164,18 @@ func (s *State) updateTask(item things.TaskActionItem) *things.Task {
 	if item.P.RecurrenceTaskIDs != nil {
 		t.RecurrenceIDs = *item.P.RecurrenceTaskIDs
 	}
+	if item.P.Repeater != nil {
+		t.Repeater = item.P.Repeater
+	}
+	if item.P.SubtaskBehavior != nil {
+		t.StartBucket = *item.P.SubtaskBehavior
+	}
+	if item.P.DeadlineSuppression != nil {
+		t.DeadlineSuppressionDate = item.P.DeadlineSuppression.Time()
+	}
+	if item.P.TaskIR != nil {
+		t.TodayIndexReferenceDate = item.P.TaskIR.Time()
+	}
 
 	return t
 }

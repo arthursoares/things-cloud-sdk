@@ -34,6 +34,30 @@ func TestTaskReadPayloadNullsAndOmissions(t *testing.T) {
 	}
 }
 
+func TestTaskReadPayloadNullsClearViewFields(t *testing.T) {
+	date := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	task := Task{ScheduledDate: &date, StartBucket: 1, DeadlineSuppressionDate: &date, TodayIndexReferenceDate: &date}
+	omitted, err := DecodeTaskReadPayload([]byte(`{"tt":"unrelated"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	omitted.ApplyNulls(&task)
+	if task.StartBucket != 1 || task.DeadlineSuppressionDate == nil || task.TodayIndexReferenceDate == nil {
+		t.Fatal("omitted sb, dds or tir changed existing state")
+	}
+	cleared, err := DecodeTaskReadPayload([]byte(`{"sb":null,"dds":null,"tir":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared.ApplyNulls(&task)
+	if task.StartBucket != 0 || task.DeadlineSuppressionDate != nil || task.TodayIndexReferenceDate != nil {
+		t.Errorf("explicit null did not clear sb, dds or tir: %+v", task)
+	}
+	if task.ScheduledDate != &date {
+		t.Error("null tir changed ScheduledDate")
+	}
+}
+
 func TestTaskReadPayloadRejectsNonObjects(t *testing.T) {
 	for _, raw := range []string{"", "null", "[]", `"text"`, `{"tt":[]}`, `{"nt":42}`, `{"nt":true}`, `{"nt":[]}`, `{"nt":{"t":"bad"}}`, `{"nt":{"t":3,"v":"private"}}`, `{"nt":{"t":2,"ps":"bad"}}`} {
 		if _, err := DecodeTaskReadPayload([]byte(raw)); err == nil {
