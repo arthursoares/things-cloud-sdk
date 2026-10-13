@@ -344,6 +344,9 @@ The sync engine detects 40+ semantic change types:
 | **Projects** | `ProjectCreated`, `ProjectCompleted`, `ProjectTrashed`, `ProjectDeleted` |
 | **Areas & Tags** | `AreaCreated`, `AreaDeleted`, `TagCreated`, `TagDeleted` |
 | **Checklists** | `ChecklistItemCreated`, `ChecklistItemCompleted`, `ChecklistItemDeleted` |
+| **History** | `ItemSkipped` (a tombstone that names no deletion target; logged, the sync continues), `UnknownChange` |
+
+A tombstone needs only its deletion target (`dloid`) to be applied; an undecodable deletion instant (`dld`) no longer stops the sync. Malformed task, area, tag and checklist payloads still stop the sync before their batch, so no entity data is skipped.
 
 ### State Queries
 

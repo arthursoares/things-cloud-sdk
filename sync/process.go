@@ -325,15 +325,21 @@ func (s *Syncer) processChecklistItem(item things.Item, serverIndex int, ts time
 }
 
 // processTombstone handles tombstone deletion records.
-// Tombstones are used for permanent deletions in Things Cloud.
+// Tombstones are used for permanent deletions in Things Cloud. The stored
+// state needs only the deletion target (dloid); the deletion instant (dld) is
+// not stored, so a malformed dld must not block every later sync. A tombstone
+// without a usable target deletes nothing and is skipped with ItemSkipped
+// instead of failing its whole batch.
 func (s *Syncer) processTombstone(item things.Item, serverIndex int, ts time.Time) ([]Change, error) {
-	// Unmarshal the tombstone payload
-	var payload things.TombstoneActionItemPayload
-	if err := json.Unmarshal(item.P, &payload); err != nil {
-		return nil, fmt.Errorf("unmarshaling tombstone payload: %w", err)
+	deletedUUID, reason := tombstoneTarget(item.P)
+	if reason != "" {
+		return []Change{ItemSkipped{
+			baseChange: baseChange{serverIndex: serverIndex, timestamp: ts},
+			entityType: string(item.Kind),
+			entityUUID: item.UUID,
+			Reason:     reason,
+		}}, nil
 	}
-
-	deletedUUID := payload.DeletedObjectID
 	var changes []Change
 
 	// Try to find and delete the object in each table
@@ -375,6 +381,22 @@ func (s *Syncer) processTombstone(item things.Item, serverIndex int, ts time.Tim
 
 	// Object not found - might have been deleted already or never synced
 	return nil, nil
+}
+
+// tombstoneTarget returns the object a tombstone payload deletes, or why it
+// names none. It decodes dloid the way the full payload struct does, so the
+// targets of well-formed tombstones are unchanged.
+func tombstoneTarget(p json.RawMessage) (target, reason string) {
+	var payload struct {
+		DeletedObjectID json.RawMessage `json:"dloid"`
+	}
+	if err := json.Unmarshal(p, &payload); err != nil {
+		return "", "tombstone payload is not a JSON object"
+	}
+	if err := json.Unmarshal(payload.DeletedObjectID, &target); err != nil || target == "" {
+		return "", "tombstone names no deletion target (dloid)"
+	}
+	return target, ""
 }
 
 // applyTaskPayload applies a task payload to an existing task state (or creates a new one).

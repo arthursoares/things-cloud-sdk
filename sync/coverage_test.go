@@ -81,6 +81,7 @@ func TestChangeGetters(t *testing.T) {
 		{ChecklistItemTitleChanged{checklistItemChange: cic}, "ChecklistItemTitleChanged", "ChecklistItem", "cli-1"},
 
 		{UnknownChange{entityType: "Weird", entityUUID: "u-1"}, "UnknownChange", "Weird", "u-1"},
+		{ItemSkipped{entityType: "Tombstone2", entityUUID: "tomb-1"}, "ItemSkipped", "Tombstone2", "tomb-1"},
 	}
 
 	for _, c := range cases {

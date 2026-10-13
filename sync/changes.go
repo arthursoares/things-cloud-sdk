@@ -621,6 +621,32 @@ func (c UnknownChange) EntityUUID() string {
 	return c.entityUUID
 }
 
+// ItemSkipped records a history item the syncer skipped because it carries
+// nothing the stored state could use, such as a tombstone that names no
+// deletion target. It is logged like any other change, so the skip stays
+// auditable, and the batch and its cursor advance past the item.
+type ItemSkipped struct {
+	baseChange
+	entityType string
+	entityUUID string
+	Reason     string
+}
+
+// ChangeType returns "ItemSkipped"
+func (c ItemSkipped) ChangeType() string {
+	return "ItemSkipped"
+}
+
+// EntityType returns the item kind, e.g. "Tombstone2"
+func (c ItemSkipped) EntityType() string {
+	return c.entityType
+}
+
+// EntityUUID returns the UUID of the skipped history item
+func (c ItemSkipped) EntityUUID() string {
+	return c.entityUUID
+}
+
 // LoggedChange represents a semantic change restored from the persisted change log.
 // It preserves the stored change type and metadata, but not type-specific fields
 // that are not persisted in the current schema.
@@ -700,5 +726,6 @@ var (
 	_ Change = (*ChecklistItemTitleChanged)(nil)
 
 	_ Change = (*UnknownChange)(nil)
+	_ Change = (*ItemSkipped)(nil)
 	_ Change = (*LoggedChange)(nil)
 )
