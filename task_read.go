@@ -10,7 +10,7 @@ import (
 
 // TaskReplayVersion identifies the task read semantics used to build derived
 // state. Cached state from older generations must be replayed from scratch.
-const TaskReplayVersion = 3
+const TaskReplayVersion = 4
 
 // UnsupportedTaskKindError means the task state would be incomplete if replay
 // continued. ServerIndex is -1 when the source did not provide an index.
@@ -43,7 +43,7 @@ func taskKindDiagnostic(value ItemKind) string {
 func ValidateTaskReadKinds(items []Item) error {
 	for _, item := range items {
 		switch item.Kind {
-		case ItemKindTask, ItemKindTask7, ItemKindTask4, ItemKindTask3, ItemKindTaskPlain:
+		case ItemKindTask, ItemKindTask7, ItemKindTask4, ItemKindTask3, ItemKindTask2, ItemKindTaskPlain:
 			continue
 		}
 		if strings.HasPrefix(string(item.Kind), "Task") {
