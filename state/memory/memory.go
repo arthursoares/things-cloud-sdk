@@ -343,8 +343,12 @@ func (s *State) Update(items ...things.Item) error {
 
 		case things.ItemKindChecklistItem, things.ItemKindChecklistItem2, things.ItemKindChecklistItem3:
 			item := things.CheckListActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			if legacy && item.P.TaskIDs != nil {
 				encodeLegacyIDs(*item.P.TaskIDs)
@@ -363,8 +367,12 @@ func (s *State) Update(items ...things.Item) error {
 
 		case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 			item := things.AreaActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			// updateArea currently discards tg, but rewrite it anyway so a
 			// future consumer of area tags sees consistent keys.
@@ -386,8 +394,12 @@ func (s *State) Update(items ...things.Item) error {
 
 		case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTag2, things.ItemKindTagPlain:
 			item := things.TagActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			if legacy && item.P.ParentTagIDs != nil {
 				encodeLegacyIDs(*item.P.ParentTagIDs)
