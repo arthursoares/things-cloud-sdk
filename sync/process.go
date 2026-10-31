@@ -85,11 +85,11 @@ func (s *Syncer) processItems(items []things.Item, baseIndex int) ([]Change, err
 // processItem routes an item to the correct handler based on its Kind.
 func (s *Syncer) processItem(item things.Item, serverIndex int, ts time.Time) ([]Change, error) {
 	switch item.Kind {
-	case things.ItemKindTask7, things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+	case things.ItemKindTask7, things.ItemKindTask, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTask2, things.ItemKindTaskPlain:
 		return s.processTaskItem(item, serverIndex, ts)
 	case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 		return s.processAreaItem(item, serverIndex, ts)
-	case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTagPlain:
+	case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTag2, things.ItemKindTagPlain:
 		return s.processTagItem(item, serverIndex, ts)
 	case things.ItemKindChecklistItem, things.ItemKindChecklistItem2, things.ItemKindChecklistItem3:
 		return s.processChecklistItem(item, serverIndex, ts)

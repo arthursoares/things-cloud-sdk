@@ -64,6 +64,7 @@ var (
 	// ItemKindTask remains Task6 for compatibility with existing callers.
 	ItemKindTask7     ItemKind = "Task7"
 	ItemKindTask4     ItemKind = "Task4"
+	ItemKindTask2     ItemKind = "Task2"
 	ItemKindTask3     ItemKind = "Task3"
 	ItemKindTaskPlain ItemKind = "Task"
 	// ItemKindArea identifies an Area in the legacy Area2 encoding.
@@ -80,6 +81,7 @@ var (
 	// ItemKindTag identifies a Tag
 	ItemKindTag            ItemKind = "Tag3"
 	ItemKindTag4           ItemKind = "Tag4"
+	ItemKindTag2           ItemKind = "Tag2"
 	ItemKindTagPlain       ItemKind = "Tag"
 	ItemKindTombstone      ItemKind = "Tombstone2"
 	ItemKindTombstonePlain ItemKind = "Tombstone"

@@ -43,10 +43,10 @@ func NewState() *State {
 // and update the same objects.
 func isLegacyItemKind(kind things.ItemKind) bool {
 	switch kind {
-	case things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain,
+	case things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTask2, things.ItemKindTaskPlain,
 		things.ItemKindChecklistItem, things.ItemKindChecklistItem2,
 		itemKindArea2, things.ItemKindAreaPlain,
-		things.ItemKindTag, things.ItemKindTagPlain,
+		things.ItemKindTag, things.ItemKindTag2, things.ItemKindTagPlain,
 		things.ItemKindTombstonePlain:
 		return true
 	default:
@@ -254,7 +254,7 @@ func (s *State) Update(items ...things.Item) error {
 	notes := make(map[string]noteState)
 	for i, rawItem := range items {
 		switch rawItem.Kind {
-		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTask2, things.ItemKindTaskPlain:
 			legacy := isLegacyItemKind(rawItem.Kind)
 			id := rawItem.UUID
 			if legacy && things.ValidateUUID(id) != nil {
@@ -314,7 +314,7 @@ func (s *State) Update(items ...things.Item) error {
 		}
 
 		switch rawItem.Kind {
-		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTaskPlain:
+		case things.ItemKindTask, things.ItemKindTask7, things.ItemKindTask4, things.ItemKindTask3, things.ItemKindTask2, things.ItemKindTaskPlain:
 			item := things.TaskActionItem{Item: rawItem}
 			var payload things.TaskReadPayload
 			if decodedTaskPayload[i] {
@@ -343,8 +343,12 @@ func (s *State) Update(items ...things.Item) error {
 
 		case things.ItemKindChecklistItem, things.ItemKindChecklistItem2, things.ItemKindChecklistItem3:
 			item := things.CheckListActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			if legacy && item.P.TaskIDs != nil {
 				encodeLegacyIDs(*item.P.TaskIDs)
@@ -363,8 +367,12 @@ func (s *State) Update(items ...things.Item) error {
 
 		case itemKindArea2, things.ItemKindArea3, things.ItemKindAreaPlain:
 			item := things.AreaActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			// updateArea currently discards tg, but rewrite it anyway so a
 			// future consumer of area tags sees consistent keys.
@@ -384,10 +392,14 @@ func (s *State) Update(items ...things.Item) error {
 				// Unsupported action: skip
 			}
 
-		case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTagPlain:
+		case things.ItemKindTag, things.ItemKindTag4, things.ItemKindTag2, things.ItemKindTagPlain:
 			item := things.TagActionItem{Item: rawItem}
-			if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
-				continue // Skip unparseable items
+			// Things deletes with an empty payload; only creates and
+			// modifications need one.
+			if rawItem.Action != things.ItemActionDeleted {
+				if err := json.Unmarshal(rawItem.P, &item.P); err != nil {
+					continue // Skip unparseable items
+				}
 			}
 			if legacy && item.P.ParentTagIDs != nil {
 				encodeLegacyIDs(*item.P.ParentTagIDs)
