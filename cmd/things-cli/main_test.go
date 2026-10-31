@@ -664,7 +664,9 @@ func TestCLIStateCacheMalformedFileTreatedAsNoCache(t *testing.T) {
 
 func testStateForListFilters() *memory.State {
 	state := memory.NewState()
-	today := time.Now().UTC()
+	// Things stores start dates as midnight UTC of the local calendar day.
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	tomorrow := today.Add(24 * time.Hour)
 
 	state.Areas[testAreaID] = &thingscloud.Area{UUID: testAreaID, Title: "Work"}
@@ -873,4 +875,46 @@ func TestNewTaskCreatePayloadStructuralTypesNeverInbox(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListTasksTodayIncludesPastStartDatesAndSkipsCanceled(t *testing.T) {
+	state := testStateForListFilters()
+	now := time.Now()
+	yesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
+	state.Tasks["overdue-1"] = &thingscloud.Task{
+		UUID:          "overdue-1",
+		Title:         "Overdue Task",
+		Schedule:      thingscloud.TaskScheduleAnytime,
+		ScheduledDate: &yesterday,
+	}
+	state.Tasks["canceled-1"] = &thingscloud.Task{
+		UUID:          "canceled-1",
+		Title:         "Canceled Task",
+		Schedule:      thingscloud.TaskScheduleAnytime,
+		ScheduledDate: &yesterday,
+		Status:        thingscloud.TaskStatusCanceled,
+	}
+
+	requireUUIDs(t, listTasks(state, map[string]string{"today": "true"}), "overdue-1", "today-1")
+	for _, uuid := range outputUUIDs(listTasks(state, map[string]string{})) {
+		if uuid == "canceled-1" || uuid == "completed-1" {
+			t.Fatalf("list includes closed task %s", uuid)
+		}
+	}
+}
+
+func TestListTasksTodayUsesLocalCalendarDay(t *testing.T) {
+	previous := time.Local
+	defer func() { time.Local = previous }()
+	// Far ahead of UTC, the local day is usually one day later than the UTC day.
+	time.Local = time.FixedZone("UTC+14", 14*60*60)
+
+	now := time.Now()
+	localToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	localTomorrow := localToday.Add(24 * time.Hour)
+	state := memory.NewState()
+	state.Tasks["local-today"] = &thingscloud.Task{UUID: "local-today", Title: "A", Schedule: thingscloud.TaskScheduleAnytime, ScheduledDate: &localToday}
+	state.Tasks["local-tomorrow"] = &thingscloud.Task{UUID: "local-tomorrow", Title: "B", Schedule: thingscloud.TaskScheduleAnytime, ScheduledDate: &localTomorrow}
+
+	requireUUIDs(t, listTasks(state, map[string]string{"today": "true"}), "local-today")
 }

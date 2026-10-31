@@ -784,26 +784,23 @@ func taskToOutput(t *thingscloud.Task) TaskOutput {
 	return out
 }
 
-func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-	return ay == by && am == bm && ad == bd
-}
-
 func listTasks(state *memory.State, opts map[string]string) []TaskOutput {
-	now := time.Now().UTC()
+	// Things stores start dates as midnight UTC of the user's local calendar
+	// day, so compare against the local date.
+	now := time.Now()
 	tomorrowStart := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 	searchQuery := strings.ToLower(strings.TrimSpace(opts["search"]))
 
 	var tasks []TaskOutput
 	for _, task := range state.Tasks {
-		if task.InTrash || task.Status == 3 || task.Type == thingscloud.TaskTypeProject {
+		if task.InTrash || task.Status == thingscloud.TaskStatusCompleted || task.Status == thingscloud.TaskStatusCanceled || task.Type == thingscloud.TaskTypeProject {
 			continue
 		}
 
 		// Filters
 		if _, ok := opts["today"]; ok {
-			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !sameDay(*task.ScheduledDate, now) {
+			// Today also shows tasks whose start date has passed.
+			if task.Schedule != thingscloud.TaskScheduleAnytime || task.ScheduledDate == nil || !task.ScheduledDate.Before(tomorrowStart) {
 				continue
 			}
 		}
